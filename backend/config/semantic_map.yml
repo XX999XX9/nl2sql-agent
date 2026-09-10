@@ -1,0 +1,51 @@
+# 语义映射配置：业务术语 → 表/字段/聚合/过滤条件
+# term_mapper 在生成 SQL 前将问题中的业务黑话翻译为数据库可理解的表达
+# type: table 表别名 | column 字段别名 | aggregation 聚合指标 | condition 过滤条件
+
+mappings:
+  # ---- 表级术语 ----
+  - { term: 用户,   type: table, table: user }
+  - { term: 客户,   type: table, table: user }
+  - { term: 会员,   type: table, table: user }
+  - { term: 商品,   type: table, table: product }
+  - { term: 产品,   type: table, table: product }
+  - { term: 货品,   type: table, table: product }
+  - { term: 订单,   type: table, table: order_record }
+  - { term: 购买记录, type: table, table: order_record }
+  - { term: 交易,   type: table, table: order_record }
+  - { term: 消费记录, type: table, table: order_record }
+
+  # ---- 字段级术语 ----
+  - { term: 用户名,  type: column, table: user, column: username }
+  - { term: 昵称,    type: column, table: user, column: username }
+  - { term: 手机号,  type: column, table: user, column: phone }
+  - { term: 电话,    type: column, table: user, column: phone }
+  - { term: 联系方式, type: column, table: user, column: phone }
+  - { term: 注册时间, type: column, table: user, column: register_time }
+  - { term: 注册日期, type: column, table: user, column: register_time }
+  - { term: 商品名,  type: column, table: product, column: product_name }
+  - { term: 商品名称, type: column, table: product, column: product_name }
+  - { term: 单价,    type: column, table: product, column: price }
+  - { term: 价格,    type: column, table: product, column: price }
+  - { term: 库存量,  type: column, table: product, column: stock }
+  - { term: 库存,    type: column, table: product, column: stock }
+  - { term: 购买数量, type: column, table: order_record, column: buy_num }
+  - { term: 数量,    type: column, table: order_record, column: buy_num }
+  - { term: 总金额,  type: column, table: order_record, column: total_money }
+  - { term: 实付金额, type: column, table: order_record, column: total_money }
+  - { term: 花费,    type: column, table: order_record, column: total_money }
+  - { term: 下单时间, type: column, table: order_record, column: buy_time }
+  - { term: 购买时间, type: column, table: order_record, column: buy_time }
+
+  # ---- 聚合指标术语 ----
+  - { term: 销售额,  type: aggregation, expression: "SUM(order_record.total_money)", desc: 销售额为订单总金额求和 }
+  - { term: 营收,    type: aggregation, expression: "SUM(order_record.total_money)", desc: 营收为订单总金额求和 }
+  - { term: 营业额,  type: aggregation, expression: "SUM(order_record.total_money)", desc: 营业额为订单总金额求和 }
+  - { term: 销量,    type: aggregation, expression: "SUM(order_record.buy_num)", desc: 销量为购买数量求和 }
+  - { term: 客单价,  type: aggregation, expression: "AVG(order_record.total_money)", desc: 客单价为订单金额平均 }
+
+  # ---- 过滤条件术语 ----
+  - { term: 缺货商品,  type: condition, expression: "product.stock = 0", desc: 缺货指库存为0 }
+  - { term: 滞销商品,  type: condition, expression: "product.stock > 200", desc: 滞销指库存大于200 }
+  - { term: 大额订单,  type: condition, expression: "order_record.total_money > 1000", desc: 大额订单指金额超过1000 }
+  - { term: 老用户,    type: condition, expression: "user.register_time < '2025-01-01'", desc: 老用户指2025年前注册 }

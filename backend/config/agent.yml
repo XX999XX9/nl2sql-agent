@@ -1,0 +1,26 @@
+# Agent 配置：LLM 模型选择、温度、各功能模块开关
+# 敏感信息通过 ${VAR} 从 backend/.env 或环境变量读取
+
+llm:
+  provider: openai_compatible          # 百炼 DashScope OpenAI兼容模式
+  api_key: ${BAILIAN_API_KEY}
+  base_url: ${BAILIAN_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+  model: ${BAILIAN_MODEL:-qwen-plus}
+  temperature: 0.0
+  max_tokens: 2048
+  timeout: 60                          # 单次调用超时（秒）
+
+embedding:
+  provider: openai_compatible          # Schema 检索向量化（text-embedding-v3）
+  api_key: ${BAILIAN_API_KEY}
+  base_url: ${BAILIAN_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+  model: ${BAILIAN_EMBEDDING_MODEL:-text-embedding-v3}
+
+# 各功能模块开关
+features:
+  metrics_enabled: true                # 运行指标统计
+  intent_classifier: true              # 意图分类前置
+  value_linker: true                   # 实体值链接
+  schema_retriever: false              # Schema 向量检索（大库 Top-K 表注入；设 true 开启，小库自动退化全量）
+  self_correction: true                # 自动纠错链路
+  prompt_optimize: true                # 提示词优化工作台

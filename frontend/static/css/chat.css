@@ -1,0 +1,245 @@
+/* 对话样式：消息气泡、回复卡片（聚合布局/tab/分割线）、状态行 */
+
+.chat-box {
+  display: flex;
+  flex-direction: column;
+}
+
+.message {
+  padding: 8px 12px;
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+
+.message.user {
+  align-self: flex-end;
+  background: var(--primary-color);
+  color: #fff;
+  max-width: 80%;
+}
+
+.message.error {
+  background: #fef2f2;
+  color: #b91c1c;
+  border: 1px solid #fecaca;
+}
+
+.message.hint {
+  color: #9ca3af;
+  font-size: 13px;
+  background: none;
+  border: none;
+  align-self: center;
+}
+
+/* hidden 属性兜底：防止 display:flex 等显式样式覆盖 UA 的 [hidden] 规则 */
+.reply-card [hidden] {
+  display: none !important;
+}
+
+/* ===== 回复卡片：一次模型回复的聚合容器 ===== */
+.reply-card {
+  align-self: flex-start;
+  width: 100%;
+  max-width: 92%;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-left: 3px solid var(--primary-color);
+  border-radius: 10px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  margin-bottom: 14px;
+}
+
+/* 卡片头：视图切换 tabs + 意图标签 */
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.view-tabs {
+  display: flex;
+  gap: 2px;
+  background: #f3f4f6;
+  border-radius: 8px;
+  padding: 3px;
+}
+
+.view-tab {
+  border: none;
+  background: transparent;
+  padding: 4px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #6b7280;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.view-tab:hover {
+  color: var(--primary-color);
+}
+
+.view-tab.active {
+  background: var(--primary-color);
+  color: #fff;
+}
+
+.intent-tag {
+  font-size: 12px;
+  color: #4f46e5;
+  background: #eef2ff;
+  border: 1px solid #c7d2fe;
+  border-radius: 999px;
+  padding: 2px 10px;
+  white-space: nowrap;
+}
+
+/* 卡片内分区：横向分割线分隔 */
+.card-section {
+  padding: 10px 14px;
+}
+
+.card-section + .card-section {
+  border-top: 1px solid #e5e7eb;
+}
+
+.card-view[hidden] {
+  display: none;
+}
+
+/* 解读文本 */
+.explain-label {
+  font-size: 12px;
+  color: #92400e;
+  margin-bottom: 4px;
+}
+
+.explain-body {
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.explain-body p {
+  margin: 0 0 6px;
+}
+
+.explain-body p:last-child {
+  margin: 0;
+}
+
+.explain-body code {
+  background: #fef3c7;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+/* 空结果提示 */
+.empty-section {
+  color: #9ca3af;
+  font-size: 13px;
+}
+
+/* 错误分区 */
+.error-section {
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 13px;
+}
+
+/* 流程状态行（识别意图中/执行中/纠错中…） */
+.status-section {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #4f46e5;
+  padding: 8px 14px;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #4f46e5;
+  animation: pulse 1s ease-in-out infinite;
+  flex: none;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+
+.typing-cursor::after {
+  content: "▍";
+  animation: blink 1s steps(2) infinite;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* ===== 纠错轨迹折叠面板（卡片内） ===== */
+.correction-section {
+  font-size: 12px;
+}
+
+.correction-toggle {
+  background: none;
+  border: none;
+  color: #6b7280;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.correction-toggle:hover {
+  color: var(--primary-color);
+}
+
+.toggle-arrow {
+  display: inline-block;
+  margin-left: 4px;
+}
+
+.correction-body {
+  margin-top: 6px;
+}
+
+.correction-item {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin-bottom: 6px;
+}
+
+.correction-round {
+  color: #b91c1c;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.correction-error {
+  color: #dc2626;
+  margin-bottom: 4px;
+  word-break: break-all;
+}
+
+.correction-sql {
+  background: #1e293b;
+  color: #e2e8f0;
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-family: Consolas, Monaco, monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0;
+}

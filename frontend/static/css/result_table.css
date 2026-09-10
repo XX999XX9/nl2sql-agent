@@ -1,0 +1,82 @@
+/* 结果表格：工具栏、数据表格（横向可滚动）、分页器、CSV 导出 */
+
+.result-table .table-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.result-table .table-tip {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.result-table .csv-btn {
+  font-size: 12px;
+  padding: 2px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.result-table .csv-btn:hover {
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+}
+
+.result-table .table-holder {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.result-table .data-table {
+  border-collapse: collapse;
+  background: #fff;
+  font-size: 13px;
+  width: 100%;
+}
+
+.result-table .data-table th,
+.result-table .data-table td {
+  border: 1px solid #e5e7eb;
+  padding: 6px 12px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.result-table .data-table th {
+  background: #f3f4f6;
+}
+
+.result-table .pager {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.result-table .page-btn {
+  font-size: 12px;
+  padding: 2px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.result-table .page-btn:hover:not(:disabled) {
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+}
+
+.result-table .page-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.result-table .page-info {
+  font-size: 12px;
+  color: #6b7280;
+}

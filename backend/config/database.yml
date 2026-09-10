@@ -1,0 +1,25 @@
+# 数据库配置：MySQL 只读账号连接、连接池、执行超时、强制 LIMIT、Schema 刷新
+# 账号密码通过 ${VAR} 从 backend/.env 或环境变量读取，应用层仅持有只读账号
+
+database:
+  driver: mysql
+  host: ${DB_HOST:-localhost}
+  port: ${DB_PORT:-3306}
+  name: ${DB_NAME:-}
+  user: ${DB_USER_NAME}
+  password: ${DB_PASSWORD}
+  charset: utf8mb4
+
+  # 连接池
+  pool_size: 5
+  max_overflow: 10
+  pool_recycle: 1800                   # 连接回收时间（秒）
+  connect_timeout: 10                  # 建连超时（秒）
+
+  # 执行保护
+  execution_timeout: 30                # SQL 执行超时（秒）
+  forced_limit: 1000                   # SELECT 自动追加的强制 LIMIT
+  result_row_limit: 1000               # 结果集截断行数
+
+  # Schema 感知
+  schema_refresh_interval: 3600        # Schema 自动刷新周期（秒）

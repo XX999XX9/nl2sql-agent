@@ -1,0 +1,8 @@
+# NL2SQL 行为配置
+correction:
+  max_rounds: 2        # 自动纠错最大轮数（执行/校验失败或值不存在时回喂重写）
+result:
+  truncate_rows: 1000  # 结果截断行数（与数据库强制 LIMIT 一致）
+schema_retriever:
+  top_k: 5             # 检索注入的相关表数量
+  threshold: 30        # 表数低于该值退化为全量拼接（检索收益低于注意力代价）

@@ -1,0 +1,146 @@
+nl2sql-agent/
+│
+├── backend/                                # 后端服务根目录（FastAPI，端口默认 8002）
+│   ├── app/                                # FastAPI 应用核心包
+│   │   ├── __init__.py                     # 包初始化，暴露应用版本号 __version__
+│   │   ├── main.py                         # 应用入口：创建FastAPI实例、注册路由（/api前缀）、CORS中间件、HTML禁缓存中间件、全局异常处理器；托管前端静态资源（NL2SQL_SERVE_FRONTEND=false 可关闭，生产由 nginx 接管）
+│   │   ├── config.py                       # 服务配置：从环境变量读取端口(NL2SQL_PORT=8002)、调试热重载(NL2SQL_DEBUG)、是否托管前端(NL2SQL_SERVE_FRONTEND)；功能模块开关在 config/agent.yml features 下，不在此处
+│   │   │
+│   │   ├── api/                            # API 接口层
+│   │   ├── __init__.py                     # 路由包初始化（空）
+│   │   ├── deps.py                         # 依赖注入：lru_cache 全局单例（ModelFactory/ConversationManager/ResultCache/NL2SQLPipeline/PromptOptimizer），路由经 Depends 使用；Pipeline 注入同一会话管理器与结果缓存实例保证共享状态
+│   │   │   └── routes/
+│   │   │       ├── __init__.py             # 路由注册汇总，供main.py统一include_router；prompt_optimize 路由受 agent.yml features.prompt_optimize 开关控制（关闭时不注册）
+│   │   │       ├── chat.py                 # 对话接口双出口共享同一pipeline：POST /api/chat 非流式JSON聚合结果；POST /api/chat/stream SSE流式逐事件推送（intent→sql→executing→correcting→explanation→result→usage→done/error）
+│   │   │       ├── result.py               # 结果接口：按query_id从结果缓存分页拉取数据（GET /api/result/{query_id}?page&page_size），支撑前端翻页
+│   │   │       ├── session.py              # 会话接口：创建/列表/详情/删除多轮对话会话（POST/GET/GET/{id}/DELETE /api/session）
+│   │   │       ├── schema_info.py          # 元信息接口：返回已接入的表列表与字段结构（/api/schema/tables）、语义映射（/api/schema/semantic-map），供前端"数据字典"面板展示
+│   │   │       └── prompt_optimize.py      # 提示词优化接口（5端点）：策略列表/文件列表/读文件/提交优化（可选A/B评估）/写回提示词文件（自动.bak备份，受allow_write_back控制）
+│   │   │
+│   │   ├── schemas/                        # Pydantic 数据模型层（请求/响应结构定义与校验）
+│   │   │   ├── __init__.py                 # schemas包初始化（空）
+│   │   │   ├── chat.py                     # ChatRequest、ChatResponse（非流式聚合）、ChatEvent（SSE事件统一结构，含事件协议注释）、TurnUsage
+│   │   │   ├── result.py                   # ResultPage（query_id/列名/行数据/页码/总页数/总行数/是否截断/SQL）
+│   │   │   ├── session.py                  # SessionCreate / SessionInfo 模型
+│   │   │   ├── schema_info.py              # TableInfo / ColumnInfo / SemanticMapItem 模型
+│   │   │   ├── prompt_optimize.py          # PromptOptimizeRequest / PromptOptimizeResponse / EvalCase / EvaluationResult / PromptApplyRequest 模型
+│   │   │   └── common.py                   # 通用模型：ApiResponse统一包装（code=0成功）、ErrorCode错误码（LLM_ERROR/SQL_INVALID/SQL_DENIED/DB_EXECUTE_ERROR等）、PageParams
+│   │   │
+│   │   ├── nl2sql/                         # NL2SQL 核心模块（自然语言转SQL主链路）
+│   │   │   ├── __init__.py                 # 暴露NL2SQLPipeline统一编排入口
+│   │   │   ├── pipeline.py                 # 流水线编排器：意图分类分流 → query：上下文增强（多轮上下文+Schema检索+术语映射+值链接）→SQL生成→静态校验→安全守卫→执行→0行值缺失诊断→自动纠错循环（最多N轮）→结果缓存→解释生成；dml：专用模板仅生成不执行；meta：基于Schema直接LLM回答。每步经TurnTracker埋点，iter_run以生成器形式逐步产出SSE事件，run()消费同一生成器返回聚合结果（单一事实来源）
+│   │   │   ├── intent_classifier.py        # 意图分类前置：区分 查询(query)/增删改(dml)/元信息(meta) 三类；关键词正则快路径（明显诉求不调LLM）+ LLM兜底，任何异常兜底query
+│   │   │   ├── conversation.py             # 多轮对话上下文管理：保存每轮{问题,SQL,涉及表,意图,解释,结果快照,usage}；追问时将上一轮SQL显式注入Prompt，支持"查今年销售额"→"按月份分组"类省略式追问；last_tables供多轮表保留；JSON文件持久化（data/session_store.json，服务重启不丢），会话TTL 24h过期清理
+│   │   │   ├── schema_manager.py           # Schema自动解析：读取information_schema的表名/字段/类型/主键索引/注释，结构化为内部元数据，拼装Prompt上下文文本；refresh()手动刷新（配置schema_refresh_interval定时刷新预留未接线）；schema_fingerprint()指纹供检索器检测表结构变更自动重建索引；build_context_for_tables()限定表集合拼接
+│   │   │   ├── schema_retriever.py         # Schema向量检索（大库场景，features.schema_retriever开关，默认关）：表名/字段/注释向量化入Chroma持久索引，提问时检索Top-K相关表注入Prompt；小库（表数<threshold）自动退化全量；指纹变化自动重建；快照指纹一致时跳过重复embedding；任何失败返回None走全量不阻断主链路
+│   │   │   ├── value_linker.py             # 值链接（features.value_linker开关）：对库中字符串列做DISTINCT采样缓存（TTL 1h），对问题做精确+模糊匹配（SequenceMatcher字符相似度，覆盖库值60%以上命中），将"机器键盘→机械键盘"类表述映射为库中真实值注入Prompt；get_column_values/has_value供纠错诊断复用
+│   │   │   ├── term_mapper.py              # 业务术语映射（语义层）：读取semantic_map.yml，识别问题中业务术语按最长匹配去重，将"营收→SUM(total_money)"类业务黑话翻译为表/字段/聚合/条件四类表达注入Prompt
+│   │   │   ├── sql_generator.py            # SQL生成核心：组装Prompt（extra_context前置+模板+Schema上下文+用户问题）调用LLM；query/dml双模板；tables参数支持Schema检索命中表子集注入；从输出提取SQL（```sql块→任意代码块→裸语句兜底），返回结构化结果含token usage
+│   │   │   ├── sql_validator.py            # SQL静态校验：sqlglot AST解析——多条语句拼接拦截、表名/字段名真实存在校验（防幻觉表/字段，CTE名视为合法表，别名/派生列跳过静态验证）；失败产出结构化错误（kind: syntax/table/column）供纠错链路回喂
+│   │   │   ├── sql_guard.py                # 安全守卫：关键词粗筛（含注释剥离防绕过）+ AST细筛（解析失败/多语句/非SELECT拦截）双重过滤；SELECT自动追加强制LIMIT（forced_limit）；与数据库只读账号形成双保险
+│   │   │   ├── sql_executor.py             # SQL执行：SQLAlchemy连接池+PyMySQL、SET max_execution_time超时控制、错误分类（syntax/permission/timeout/other供纠错消费）、结果行数截断（result_row_limit）与行数据规范化（datetime→ISO、Decimal→float）；截断时COUNT(*)包装查真实总行数（未截断total=-1由pipeline填行数）
+│   │   │   ├── result_cache.py             # 结果缓存：query_id→结果集（LRU容量50+TTL 30分钟淘汰），get_page分页读取支撑前端翻页与CSV导出；由pipeline执行成功后写入
+│   │   │   ├── self_corrector.py           # 自动纠错链路（features.self_correction开关）：诊断+回喂重写——执行/校验失败回喂错误重写SQL；diagnose_zero_row诊断0行结果中WHERE等值条件值不在库采样值中（合法0行不触发），值缺失时把该列真实取值一并回喂让模型改用正确值；每轮重写产物仍需过校验+守卫；最多N轮（nl2sql.yml correction.max_rounds）
+│   │   │   └── sql_explainer.py            # SQL解释生成：调用LLM将最终SQL翻译为业务化中文阐释（用到的表/条件/聚合/排序）；失败返回空串不阻断主链路（解释是增益能力）
+│   │   │
+│   │   ├── model/                          # 模型层
+│   │   │   ├── __init__.py                 # model包初始化（空）
+│   │   │   └── factory.py                  # 模型工厂：从agent.yml读配置创建LLMClient（OpenAI兼容Chat Completions封装，统一返回content+token usage）/EmbeddingClient（向量化，百炼单批≤10条自动分批）；LLMResult含reasoning字段兼容推理模型
+│   │   │
+│   │   ├── optimizer/                      # 提示词优化模块（features.prompt_optimize开关控制路由注册）
+│   │   │   ├── __init__.py                 # 暴露PromptOptimizer
+│   │   │   ├── prompt_optimizer.py         # 优化器：元提示词驱动LLM按策略改写提示词，解析<optimized>/<notes>标记输出优化版与修改说明；list/read/apply文件操作带路径穿越防护（_safe_path），元提示词自身受保护不可覆盖；apply写回自动.bak备份，受optimizer.yml allow_write_back控制
+│   │   │   ├── evaluator.py                # 评估器：LLM生成N个测试用例→原版/优化版分别执行→LLM逐例判定胜负（位置交替防偏置）→本地汇总评分与结论，省一次调用
+│   │   │   └── strategies.py               # 优化策略定义：清晰化/加约束/结构化/少样本增强/精简五种策略（dataclass），每种含注入元提示词的指导文本
+│   │   │
+│   │   ├── formatter/                      # 输出规范化模块
+│   │   │   ├── __init__.py                 # 暴露OutputFormatter
+│   │   │   ├── output_formatter.py         # 格式化器：解释/回答/SQL/统计四类出口模板化（format_explanation去噪+行数封顶、format_answer仅去噪、format_usage渲染统计摘要）；含流式增量格式化预留（format_incremental按完整行切分）
+│   │   │   ├── normalizer.py               # 规范化：清理模型输出噪声——寒暄前缀循环剥离、Markdown围栏残留、连续空行压缩、解释文本max_lines封顶
+│   │   │   └── templates.py                # 输出模板：SQL展示块/解释卡片/统计信息条的模板定义与render_usage_summary渲染函数
+│   │   │
+│   │   ├── metrics/                        # 统计监控模块
+│   │   │   ├── __init__.py                 # 暴露TurnTracker / estimate_tokens
+│   │   │   ├── turn_tracker.py             # 单轮追踪器（features.metrics_enabled开关，关闭时step/add_tokens空转、finish返回零值结构）：with step("名")埋点记录每步耗时，add_tokens把LLM调用token归到当前活动步骤，finish()合并同名步骤生成TurnUsage摘要（总耗时+总token+分步明细）供usage事件推送
+│   │   │   └── token_counter.py            # token计数：优先取LLM API返回的usage（最准确）；本模块提供缺失时的本地估算兜底（tiktoken精确编码，未安装则中文≈1字/token、英文≈4字符/token粗估）
+│   │   │
+│   │   └── utils/                          # 通用工具函数
+│   │       ├── __init__.py                 # utils包初始化（空）
+│   │       ├── path_tool.py                # 路径工具：PROJECT_ROOT/BACKEND_ROOT根目录定位、project_path拼接
+│   │       ├── logger_handler.py           # 日志工具：setup_logger单例日志器，TimedRotatingFileHandler按日轮转（logs/agent.log，保留30天）+控制台双输出
+│   │       ├── file_handler.py             # 文件处理：read_text/write_text读写、md5校验
+│   │       └── config_handler.py           # 配置读取：模块导入时自动加载backend/.env；load_yaml统一加载YAML并支持${VAR}/${VAR:-default}环境变量插值（敏感信息不落配置文件）
+│   │   │
+│   ├── config/                             # 配置文件目录（YAML格式，敏感值经${VAR}从.env插值）
+│   │   ├── database.yml                    # 数据库配置：MySQL只读账号连接、连接池(pool_size/max_overflow/pool_recycle)、执行超时(30s)、强制LIMIT(1000)、结果截断行数(1000)、Schema刷新周期(schema_refresh_interval预留未接线)
+│   │   ├── nl2sql.yml                      # NL2SQL配置：correction.max_rounds纠错最大轮数、schema_retriever.top_k检索表数/threshold小库退化阈值、result.truncate_rows(预留，实际读database.yml result_row_limit)
+│   │   ├── semantic_map.yml                # 语义映射配置：业务术语→表/字段/聚合/条件四类映射表
+│   │   ├── agent.yml                       # Agent配置：llm.*(模型/温度/max_tokens/超时)、embedding.*(百炼text-embedding-v3)、features六开关（metrics_enabled/intent_classifier/value_linker/schema_retriever/self_correction/prompt_optimize）
+│   │   └── optimizer.yml                   # 优化模块配置：eval_cases评估用例数(3)、allow_write_back写回开关(default_strategy预留未接线)
+│   │
+│   ├── prompts/                            # 提示词模板目录（优化工作台可写回，.bak自动备份）
+│   │   ├── system_prompt.txt               # 系统提示词：SQL生成时的整体角色与行为规范总设定
+│   │   ├── nl2sql_prompt.txt               # NL2SQL生成主提示词：{schema_context}{question}占位，SQL书写规范与输出格式约定
+│   │   ├── dml_prompt.txt                  # DML生成提示词：写操作专用模板（仅生成不执行分支）
+│   │   ├── intent_prompt.txt               # 意图分类提示词：{question}占位，query/dml/meta类别判定
+│   │   ├── correct_prompt.txt              # 纠错重写提示词：{schema_context}{question}{sql}{error}占位，错误回喂重写指令
+│   │   ├── explain_prompt.txt              # SQL解释提示词：{schema_context}{sql}占位，面向业务用户的阐释风格
+│   │   └── prompt_optimize_prompt.txt      # 元提示词：指导LLM优化提示词的提示词（受保护不可被覆盖）
+│   │
+│   ├── data/                               # 运行时数据目录（整体gitignore）
+│   │   ├── session_store.json              # 会话持久化存储（JSON原子写，含全部轮次回放数据）
+│   │   ├── schema_store/                   # Schema向量检索持久化：chroma_index/(Chroma索引) + snapshot.json(指纹快照，命中跳过重建)
+│   │   ├── chroma_db/                      # （遗留空目录，实际索引在schema_store/chroma_index，可删除）
+│   │   └── md5_hex.txt                     # （遗留文件，当前无代码引用，可删除）
+│   │
+│   ├── logs/                               # 运行日志目录（按日期滚动，gitignore）
+│   │   └── agent.log                       # 主日志（按日轮转保留30天）
+│   │
+│   ├── run.py                              # 启动脚本：以uvicorn启动FastAPI（host/port/debug从环境变量读取）
+│   ├── requirements.txt                    # 后端依赖：fastapi、uvicorn、pydantic、sqlglot、sqlalchemy+pymysql/aiomysql、openai、chromadb、tiktoken、PyYAML
+│   └── Dockerfile                          # （待补充：docker-compose.yml backend服务引用./backend构建，但Dockerfile尚未提供）
+│
+├── frontend/                               # 前端工程根目录（HTML/CSS/JS原生实现，无构建步骤）
+│   ├── index.html                          # 主页面：三栏布局（会话列表/对话区/数据字典）+顶栏开合按钮+输入区，按依赖序引入库与模块脚本
+│   ├── prompt_optimize.html                # 提示词优化工作台：左输入区（文件加载/策略选择/额外要求/评估开关）+右结果区（修改说明/双栏diff/评估对比/写回）
+│   ├── nginx.conf                          # Nginx配置：托管前端静态资源，/api反向代理到后端容器
+│   │
+│   └── static/
+│       ├── css/
+│       │   ├── main.css                    # 全局样式：CSS变量、重置、三栏布局、侧栏开合（桌面收起/窄屏抽屉）、响应式适配
+│       │   ├── chat.css                    # 对话组件样式：消息气泡、回复卡片分区、[hidden]强制隐藏
+│       │   ├── result_table.css            # 结果表格样式：表格、分页器、截断提示
+│       │   ├── sql_block.css               # SQL展示块样式：代码高亮、复制按钮、纠错轨迹折叠面板
+│       │   ├── metrics.css                 # 统计条样式：耗时/token摘要行、悬停分步明细浮层
+│       │   ├── prompt_optimize.css         # 优化工作台样式：双栏diff高亮、评估用例卡片
+│       │   └── components.css              # 通用组件样式：按钮、图标按钮、标签等
+│       │
+│       ├── js/
+│       │   ├── api.js                      # API封装：fetch统一请求（非2xx解析后端detail/message透出错误详情）；SSE用fetch+ReadableStream解析data:事件（POST流，非EventSource）；会话/对话接口封装
+│       │   ├── chat.js                     # 对话逻辑：SSE事件按类型分流到回复卡片（intent/sql/executing/correcting/explanation/result/usage/error/done）；发送前等待会话就绪（waitForSession防首条消息丢session_id）；顶栏侧栏开合绑定
+│       │   ├── reply_card.js               # 回复卡片组件：一次回复聚合一张卡（视图切换tabs/意图标签/状态行/SQL块/纠错轨迹/解读/结果视图/统计条），流式事件原地填充分区
+│       │   ├── result_table.js             # 结果表格组件：首屏渲染+按query_id分页拉取（页缓存）+本地切片（回放快照）+CSV导出（BOM防乱码）
+│       │   ├── sql_block.js                # SQL块组件：sql-formatter美化+highlight.js高亮+一键复制（clipboard API/execCommand兜底）
+│       │   ├── metrics.js                  # 统计组件：usage事件渲染摘要行（耗时·token），悬停浮出分步明细（步骤名/耗时/token），纯CSS hover
+│       │   ├── session.js                  # 会话管理：列表拉取/新建/切换/删除；当前会话ID存localStorage刷新不新建；历史回放与流式渲染同构（回复卡片复用）；sessionReady标志供chat.js等待
+│       │   ├── schema_dict.js              # 数据字典：拉取表结构与语义映射，侧边栏树形展示（表→字段展开），点击表名快捷插入输入框
+│       │   ├── prompt_optimize.js          # 优化工作台逻辑：策略chips/文件加载/提交优化/行级LCS双栏diff/评估结果渲染/写回确认
+│       │   └── utils.js                    # 前端工具函数：Markdown渲染、代码高亮、防抖节流、日期格式化
+│       │
+│       ├── assets/
+│       │   └── images/                     # 图片资源目录
+│       │
+│       └── libs/                           # 第三方前端库（本地引用，避免依赖外网CDN）
+│           ├── marked.min.js               # Markdown渲染库
+│           ├── highlight.min.js            # 代码高亮库（含SQL语法支持）
+│           └── sql-formatter.min.js        # SQL格式化库：SQL语句缩进美化展示
+│
+├── docker-compose.yml                      # Docker编排：backend服务（引用./backend构建，Dockerfile待补充）+frontend服务（nginx:alpine挂载静态资源与nginx.conf反代/api）
+├── scripts/
+│   ├── start_backend.sh                    # 后端启动脚本：安装依赖并以指定端口启动uvicorn
+│   ├── start_frontend.sh                   # 前端启动脚本：开发环境起静态服务器/加载Nginx
+│   └── init_schema_cache.sh                # 预热脚本：解析表结构+构建Schema向量索引（--force强制重建）；仅features.schema_retriever开启时有意义
+│
+├── README.md                               # 项目说明：功能介绍、配置表、启动指南、接口文档、FAQ
+├── 项目说明书.md                            # 详细说明书：全链路图、节点与条件边、开关、模型调用、文件分类注释（gitignore，不入库）
+└── 产品文档.txt                             # 产品需求文档（gitignore，不入库）

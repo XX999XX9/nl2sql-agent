@@ -1,0 +1,27 @@
+version: "3"
+
+services:
+  backend:
+    build:
+      context: ./backend
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./backend/data:/app/data
+      - ./backend/config:/app/config
+      - ./backend/prompts:/app/prompts
+      - ./backend/logs:/app/logs
+    environment:
+      - NL2SQL_PORT=8002
+    restart: unless-stopped
+
+  frontend:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./frontend:/usr/share/nginx/html
+      - ./frontend/nginx.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - backend
+    restart: unless-stopped

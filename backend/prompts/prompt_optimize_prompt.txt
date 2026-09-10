@@ -1,0 +1,16 @@
+你是资深提示词工程师。请按给定优化策略改进下面的提示词，输出优化后的完整提示词与修改说明。
+
+【优化策略】{strategy_name}：{strategy_description}
+改写指导：
+{strategy_guidance}
+{requirements_block}
+【原始提示词】
+{prompt}
+
+输出格式（严格遵守，不要输出任何其他内容）：
+<optimized>
+优化后的完整提示词（可直接使用的最终版本）
+</optimized>
+<notes>
+修改说明：逐条列出做了什么改动、为什么这样改
+</notes>

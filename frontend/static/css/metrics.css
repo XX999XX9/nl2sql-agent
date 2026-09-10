@@ -1,0 +1,54 @@
+/* 统计信息：卡片底部摘要行 + 悬停分步明细浮层 */
+
+.card-footer {
+  position: relative;
+  padding: 6px 14px;
+  border-top: 1px solid #e5e7eb;
+  background: #fafafa;
+  border-radius: 0 0 10px 10px;
+}
+
+.usage-row {
+  font-size: 12px;
+  color: #6b7280;
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+  user-select: none;
+}
+
+/* 悬停浮层：分步明细（纯 CSS hover，移出即消失） */
+.usage-popover {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 10px;
+  min-width: 200px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  padding: 10px 14px;
+  z-index: 20;
+  pointer-events: none;
+}
+
+.card-footer:hover .usage-popover {
+  display: block;
+}
+
+.usage-step-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  font-size: 12px;
+  line-height: 1.9;
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-step-line .step-name {
+  color: #374151;
+}
+
+.usage-step-line .step-meta {
+  color: #6b7280;
+}

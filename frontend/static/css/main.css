@@ -1,0 +1,350 @@
+/* 全局样式：变量定义、重置样式、布局、响应式适配 */
+
+:root {
+  --primary-color: #4f46e5;
+  --bg-color: #f5f5f5;
+  --text-color: #1f2937;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg-color);
+  color: var(--text-color);
+}
+
+#app {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #fff;
+}
+
+.app-header h1 {
+  font-size: 18px;
+}
+
+.chat-box {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 4px;
+}
+
+.chat-input-bar {
+  display: flex;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid #e5e7eb;
+  background: #fff;
+}
+
+.chat-input-bar input {
+  flex: 1;
+  padding: 10px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+  outline: none;
+}
+
+.chat-input-bar input:focus {
+  border-color: var(--primary-color);
+}
+
+.message {
+  max-width: 80%;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 768px) {
+  #app {
+    padding: 8px;
+  }
+
+  .message {
+    max-width: 92%;
+  }
+}
+
+/* ===== 三栏布局：会话栏 | 对话区 | 数据字典栏 ===== */
+.app-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.side-panel {
+  width: 240px;
+  background: #f9fafb;
+  border-right: 1px solid #e5e7eb;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.dict-panel {
+  border-right: none;
+  border-left: 1px solid #e5e7eb;
+  width: 280px;
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #374151;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+/* 顶栏图标按钮 */
+.icon-btn {
+  background: none;
+  border: none;
+  font-size: 18px;
+  cursor: pointer;
+  color: #6b7280;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.icon-btn:hover {
+  background: #f3f4f6;
+}
+
+/* 响应式：窄屏隐藏侧栏 */
+@media (max-width: 1100px) {
+  .dict-panel { display: none; }
+}
+@media (max-width: 860px) {
+  .session-panel { display: none; }
+}
+
+/* 顶栏按钮开合侧栏：桌面端手动收起 */
+.side-panel.collapsed {
+  display: none;
+}
+
+/* 窄屏端：按钮以抽屉形式弹出被隐藏的侧栏 */
+@media (max-width: 1100px) {
+  .dict-panel.open {
+    display: flex;
+    position: fixed;
+    top: 45px;
+    right: 0;
+    bottom: 0;
+    z-index: 60;
+    box-shadow: -4px 0 12px rgba(0, 0, 0, 0.15);
+  }
+}
+@media (max-width: 860px) {
+  .session-panel.open {
+    display: flex;
+    position: fixed;
+    top: 45px;
+    left: 0;
+    bottom: 0;
+    z-index: 60;
+    box-shadow: 4px 0 12px rgba(0, 0, 0, 0.15);
+  }
+}
+
+/* ===== 会话列表 ===== */
+.session-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.session-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #374151;
+}
+
+.session-item:hover {
+  background: #eef2ff;
+}
+
+.session-item.active {
+  background: #e0e7ff;
+  color: #3730a3;
+}
+
+.session-title {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-del {
+  border: none;
+  background: none;
+  color: #9ca3af;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 4px;
+}
+
+.session-del:hover {
+  color: #dc2626;
+}
+
+.btn-sm {
+  font-size: 12px;
+  padding: 3px 10px;
+}
+
+/* ===== 数据字典 ===== */
+.dict-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+.dict-empty {
+  color: #9ca3af;
+  text-align: center;
+  padding: 20px 0;
+}
+
+.dict-section-title {
+  font-weight: 600;
+  color: #374151;
+  margin: 10px 0 6px;
+  font-size: 13px;
+}
+
+.dict-table-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 2px;
+  cursor: pointer;
+  color: #1f2937;
+}
+
+.dict-caret {
+  color: #9ca3af;
+  width: 12px;
+}
+
+.dict-table-name {
+  font-weight: 500;
+  color: #4f46e5;
+}
+
+.dict-table-name:hover {
+  text-decoration: underline;
+}
+
+.dict-table-comment {
+  color: #9ca3af;
+}
+
+.dict-columns {
+  padding-left: 18px;
+}
+
+.dict-col {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  color: #4b5563;
+}
+
+.dict-col-name {
+  color: #1f2937;
+  min-width: 90px;
+}
+
+.dict-col-type {
+  color: #059669;
+}
+
+.dict-col-comment {
+  color: #9ca3af;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tag {
+  font-size: 10px;
+  padding: 0 4px;
+  border-radius: 3px;
+  line-height: 16px;
+}
+
+.tag-pk {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.tag-idx {
+  background: #e0e7ff;
+  color: #4338ca;
+}
+
+.dict-sem-group {
+  margin-bottom: 8px;
+}
+
+.dict-sem-title {
+  color: #6b7280;
+  margin-bottom: 2px;
+}
+
+.dict-sem-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 0;
+}
+
+.dict-sem-term {
+  color: #1f2937;
+  white-space: nowrap;
+}
+
+.dict-sem-arrow {
+  color: #9ca3af;
+}
+
+.dict-sem-expr {
+  color: #4f46e5;
+  background: #eef2ff;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

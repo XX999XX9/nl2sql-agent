@@ -1,0 +1,4 @@
+# 优化模块配置
+default_strategy: clarify   # 默认优化策略（strategies.py 中定义）
+eval_cases: 3               # 评估用例数（每个用例约 3 次 LLM 调用，注意耗时与 token）
+allow_write_back: true      # 是否允许将优化结果写回 prompts/ 文件（生产可关闭）

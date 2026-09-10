@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>智数通 NL2SQL Agent</title>
+  <link rel="stylesheet" href="static/css/main.css" />
+  <link rel="stylesheet" href="static/css/chat.css" />
+  <link rel="stylesheet" href="static/css/components.css" />
+  <link rel="stylesheet" href="static/css/sql_block.css" />
+  <link rel="stylesheet" href="static/css/result_table.css" />
+  <link rel="stylesheet" href="static/css/metrics.css" />
+</head>
+<body>
+  <div id="app">
+    <header class="app-header">
+      <button id="toggle-sessions" class="icon-btn" title="会话列表">☰</button>
+      <h1>智数通 NL2SQL Agent</h1>
+      <button id="toggle-dict" class="icon-btn" title="数据字典">📚</button>
+    </header>
+
+    <div class="app-body">
+      <!-- 左栏：会话管理 -->
+      <aside id="session-panel" class="side-panel session-panel">
+        <div class="panel-header">
+          <span>会话</span>
+          <button id="new-session-btn" class="btn btn-sm">＋ 新建</button>
+        </div>
+        <div id="session-list" class="session-list"></div>
+      </aside>
+
+      <!-- 中间：对话区 -->
+      <main id="message-list" class="chat-box"></main>
+
+      <!-- 右栏：数据字典 -->
+      <aside id="dict-panel" class="side-panel dict-panel">
+        <div class="panel-header"><span>数据字典</span></div>
+        <div id="dict-body" class="dict-body"></div>
+      </aside>
+    </div>
+
+    <footer class="chat-input-bar">
+      <input id="chat-input" type="text" placeholder="输入你的问题，例如：查一下今年的销售额" autocomplete="off" />
+      <button id="chat-send" class="btn">发送</button>
+    </footer>
+  </div>
+  <script src="static/libs/marked.min.js"></script>
+  <script src="static/libs/highlight.min.js"></script>
+  <script src="static/libs/sql-formatter.min.js"></script>
+  <script src="static/js/utils.js"></script>
+  <script src="static/js/api.js"></script>
+  <script src="static/js/sql_block.js"></script>
+  <script src="static/js/result_table.js"></script>
+  <script src="static/js/metrics.js"></script>
+  <script src="static/js/reply_card.js"></script>
+  <script src="static/js/schema_dict.js"></script>
+  <script src="static/js/session.js"></script>
+  <script src="static/js/chat.js"></script>
+</body>
+</html>

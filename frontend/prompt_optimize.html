@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>提示词优化工作台 - 智数通 NL2SQL Agent</title>
+    <link rel="stylesheet" href="static/css/main.css" />
+    <link rel="stylesheet" href="static/css/components.css" />
+    <link rel="stylesheet" href="static/css/prompt_optimize.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <h1>提示词优化工作台</h1>
+      <a class="back-link" href="/">← 返回对话</a>
+    </header>
+
+    <main class="workbench">
+      <!-- 左：输入区 -->
+      <section class="panel input-panel">
+        <div class="panel-head">
+          <h2>原始提示词</h2>
+          <div class="file-loader">
+            <select id="prompt-file-select"><option value="">从文件加载…</option></select>
+          </div>
+        </div>
+        <textarea id="prompt-input" placeholder="粘贴待优化的提示词，或从上方选择已有提示词文件加载"></textarea>
+
+        <div class="strategy-row">
+          <span class="label">优化策略</span>
+          <div id="strategy-chips" class="chips"></div>
+        </div>
+
+        <div class="req-row">
+          <input id="requirements-input" type="text" placeholder="额外要求（可选），如：保留中文示例" />
+        </div>
+
+        <div class="action-row">
+          <label class="eval-check">
+            <input type="checkbox" id="evaluate-check" />
+            对比评估（生成用例并 A/B 判定，约 1 分钟）
+          </label>
+          <button id="optimize-btn" class="primary-btn" type="button">开始优化</button>
+        </div>
+        <div id="status-line" class="status-line" hidden></div>
+      </section>
+
+      <!-- 右：结果区 -->
+      <section class="panel result-panel">
+        <div class="panel-head">
+          <h2>优化结果</h2>
+          <div id="apply-bar" class="apply-bar" hidden>
+            <select id="apply-target"><option value="">应用到文件…</option></select>
+            <button id="apply-btn" class="primary-btn small" type="button">写回</button>
+          </div>
+        </div>
+
+        <div id="result-empty" class="empty-hint">尚无结果——输入提示词后点击「开始优化」</div>
+
+        <div id="result-body" hidden>
+          <div class="notes-block">
+            <div class="block-label">修改说明</div>
+            <div id="notes-content" class="notes-content"></div>
+          </div>
+
+          <div class="diff-block">
+            <div class="block-label">对比（左：原始 · 右：优化版 · <span class="legend-add">绿=新增</span> <span class="legend-del">红=删除</span>）</div>
+            <div class="diff-cols">
+              <pre id="diff-original" class="diff-pane"></pre>
+              <pre id="diff-optimized" class="diff-pane"></pre>
+            </div>
+          </div>
+
+          <div id="evaluation-block" class="eval-block" hidden>
+            <div class="block-label">对比评估</div>
+            <div id="eval-summary" class="eval-summary"></div>
+            <div id="eval-cases" class="eval-cases"></div>
+          </div>
+
+          <div class="usage-line" id="optimize-usage"></div>
+        </div>
+      </section>
+    </main>
+
+    <script src="static/js/utils.js"></script>
+    <script src="static/js/api.js"></script>
+    <script src="static/js/prompt_optimize.js"></script>
+  </body>
+</html>

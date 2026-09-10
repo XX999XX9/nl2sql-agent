@@ -1,0 +1,64 @@
+/* SQL 代码块：深色背景、语法高亮配色、复制按钮 */
+
+.sql-block .sql-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.sql-block .sql-label {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.sql-block .sql-copy-btn {
+  font-size: 12px;
+  padding: 2px 10px;
+  border: 1px solid #475569;
+  border-radius: 4px;
+  background: transparent;
+  color: #cbd5e1;
+  cursor: pointer;
+}
+
+.sql-block .sql-copy-btn:hover {
+  border-color: #93c5fd;
+  color: #93c5fd;
+}
+
+.sql-block .sql-code {
+  background: #1e293b;
+  color: #e2e8f0;
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-family: Consolas, Monaco, monospace;
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0;
+}
+
+/* highlight.js SQL token 配色（深底） */
+.sql-code .hljs-keyword,
+.sql-code .hljs-type {
+  color: #93c5fd;
+}
+
+.sql-code .hljs-string {
+  color: #86efac;
+}
+
+.sql-code .hljs-number {
+  color: #fdba74;
+}
+
+.sql-code .hljs-comment {
+  color: #64748b;
+  font-style: italic;
+}
+
+.sql-code .hljs-built_in,
+.sql-code .hljs-literal {
+  color: #f0abfc;
+}

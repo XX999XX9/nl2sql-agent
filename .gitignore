@@ -1,0 +1,31 @@
+# ===== 敏感信息与环境 =====
+backend/.env
+.env
+*.env
+# Spider 测试环境凭据（test_env/README.md 入库，凭据不入库）
+test_env/.env.test
+
+# ===== 文档（内部资料，不入库） =====
+产品文档.txt
+项目说明书.md
+简历-项目经历.md
+test_queries.csv
+
+# ===== 运行产物与缓存 =====
+# 后端运行时数据：会话存储、Schema 向量索引与快照、遗留文件
+backend/data/
+# 运行日志
+backend/logs/
+*.log
+# Python 缓存
+__pycache__/
+*.pyc
+# 提示词写回自动备份
+*.bak
+
+# ===== 编辑器与系统文件 =====
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
