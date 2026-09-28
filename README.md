@@ -1,8 +1,8 @@
 # 智数通 NL2SQL Agent
 
-自然语言查询数据库（NL2SQL）智能体：自然语言提问 → 意图分类 → SQL 生成 → AST 校验 → 安全守卫 → 执行 → 自动纠错 → 业务化解释，全流程 SSE 流式呈现。
+自然语言查询数据库（NL2SQL）智能体：自然语言提问 → 意图分类 → SQL 生成 → AST 校验 → 安全守卫 → JOIN 扇出检测 → 执行 → 自动纠错 → 业务化解释，全流程 SSE 流式呈现。
 
-- 后端：Python 3.10+ / FastAPI / SQLAlchemy / sqlglot / ChromaDB
+- 后端：Python 3.10+ / FastAPI / LangGraph（流水线编排）/ SQLAlchemy / sqlglot / ChromaDB
 - 前端：原生 HTML/CSS/JS（无框架），本地引入 marked / highlight.js / sql-formatter
 - 模型：百炼 DashScope（OpenAI 兼容模式），LLM 与 Embedding 均可配置
 - 数据库：MySQL 8.x（只读账号）
@@ -17,7 +17,7 @@
 ### 意图分流
 | 意图 | 行为 |
 |---|---|
-| query 查询 | 完整链路：生成 → 校验 → 守卫 → 执行 → 结果 |
+| query 查询 | 完整链路：生成 → 校验 → 守卫 → JOIN 扇出检测 → 执行 → 结果 |
 | dml 增删改 | 仅生成 SQL + 解释，**绝不执行**（不进守卫与执行路径） |
 | meta 元信息 | 基于表结构元数据直接回答，不生成 SQL |
 
@@ -26,10 +26,16 @@
 2. **安全守卫**：关键词（词边界 + 剥注释防绕过）+ AST 双重过滤，拦 DROP/DELETE/ALTER/TRUNCATE 等危险语句，SELECT 自动注入强制 LIMIT
 3. **只读数据库账号**：即使前两道被突破，数据库层拒绝一切写操作
 
+### 多表查询（JOIN 治理）
+- **表关系图谱**（`relation_graph.py`）：显式外键 → 命名约定推断 → 采样数据验证三级建图，自动补全多表 JOIN 路径；按 Schema 指纹持久化快照到 `data/relation_store/`，结构不变重启零重建
+- **生成期辅助**：相关表关联关系注入 Prompt，并按图邻接扩展候选表，补全 LLM 漏选的关联表
+- **笛卡尔积拦截**（`sql_validator.py`）：AST 静态拦截无 ON/USING 的 JOIN（CROSS/NATURAL JOIN 等显式写法放行）
+- **JOIN 扇出检测**（`fanout_checker.py`）：基于一对多基数方向识别"一端 JOIN 多端再聚合导致 COUNT/SUM 行数翻倍"，检出即附修正提示推入纠错循环（同类只纠一次防死循环）
+
 ### 准确性增强
 - **术语映射**：`config/semantic_map.yml`（42 条），"销售额→SUM(total_money)"、"缺货商品→stock=0"，最长匹配防误替换
-- **值链接**：字符串列 DISTINCT 采样 + 滑动窗口模糊匹配，"机器键盘→机械键盘"、"笔记本架→笔记本支架"
-- **自动纠错**：三类可纠正失败（校验失败/执行报错/值不存在导致 0 行）自动回喂 LLM 重写（最多 2 轮，可配）；值缺失时把该列真实取值列表一并回喂；合法 0 行（如库存>99999）不误触
+- **值链接**：字符串列 DISTINCT 采样（每列上限 200，TTL 1h）+ 滑动窗口模糊匹配，"机器键盘→机械键盘"、"笔记本架→笔记本支架"，对状态/类别等可枚举列效果最好
+- **自动纠错**：可纠正失败（校验失败/执行报错/无 ON 笛卡尔积/JOIN 扇出/值不存在导致 0 行）自动回喂 LLM 重写（最多 2 轮，可配）；值缺失时把该列真实取值列表一并回喂；合法 0 行（如库存>99999）不误触
 
 ### 大库支持（可选开启）
 - 表/字段/注释向量化（Chroma 持久化 `data/schema_store/`），提问时检索 Top-K 相关表注入 Prompt
@@ -58,7 +64,7 @@ nl2sql-agent/
 │   │   │   ├── deps.py              # 全局单例（pipeline/会话/缓存/优化器）
 │   │   │   └── routes/              # chat / result / session / schema_info / prompt_optimize
 │   │   ├── schemas/                 # Pydantic 请求响应模型 + SSE 事件协议定义
-│   │   ├── nl2sql/                  # 核心模块（15 个，见下文链路说明）
+│   │   ├── nl2sql/                  # 核心模块（17 个，含关系图谱/扇出检测，见下文）
 │   │   ├── model/factory.py         # LLM / Embedding 客户端工厂
 │   │   ├── optimizer/               # 提示词优化（optimizer/evaluator/strategies）
 │   │   ├── formatter/               # 输出规范化（normalizer/output_formatter/templates）
@@ -66,7 +72,7 @@ nl2sql-agent/
 │   │   └── utils/                   # 路径/日志/配置/文件工具
 │   ├── config/                      # YAML 配置（见下文）
 │   ├── prompts/                     # 提示词模板（7 个 .txt）
-│   ├── data/                        # session_store.json / schema_store/（向量索引+快照）
+│   ├── data/                        # 运行时数据（不入库）：session_store / schema_store / relation_store
 │   ├── logs/                        # 运行日志（按日期滚动）
 │   └── run.py                       # uvicorn 启动入口
 ├── frontend/
@@ -75,9 +81,12 @@ nl2sql-agent/
 │   ├── static/css|js|libs           # 样式/脚本/本地第三方库
 │   └── nginx.conf                   # 生产静态托管 + /api 反代
 ├── scripts/                         # start_backend / start_frontend / init_schema_cache
+├── test_env/                        # 本地 Spider 基准评测环境（测试脚本/数据/结果，不入库）
 ├── docker-compose.yml
 └── architecture.txt                 # 架构规范文档
 ```
+
+> 注：`test_env/`（Spider 评测脚本、测试凭据、评测结果与本地生成的向量/关系索引）、`backend/data/`（运行时数据）、`backend/.env`（密钥）均在 `.gitignore` 中；克隆仓库后需自建 `.env` 配置，评测数据不随仓库分发。
 
 ## 环境要求
 
@@ -121,12 +130,15 @@ FLUSH PRIVILEGES;
 | agent.yml | llm.* | 模型/温度/max_tokens/超时，`${VAR}` 从 .env 插值 | 生效 |
 | agent.yml | embedding.* | 向量化模型（大库检索用） | 生效 |
 | agent.yml | features.schema_retriever | 大库 Top-K 表检索（true 开启） | **生效** |
-| agent.yml | features.metrics_enabled / intent_classifier / value_linker / self_correction / prompt_optimize | 预留开关 | 预留（未接线，对应能力常开） |
+| agent.yml | features.metrics_enabled / intent_classifier / value_linker / self_correction / prompt_optimize | 各功能模块开关（默认开） | **生效** |
+| agent.yml | features.relation_graph / join_static_check / fanout_check | JOIN 治理三开关：表关联关系图谱 / 无 ON 笛卡尔积拦截 / 扇出检测（默认全开） | **生效** |
 | database.yml | url/连接池/执行超时 | MySQL 连接 | 生效 |
 | database.yml | force_limit | SELECT 强制 LIMIT | 生效 |
 | database.yml | result_row_limit | 结果截断行数 | 生效 |
 | nl2sql.yml | correction.max_rounds | 纠错最大轮数（0=关闭） | 生效 |
 | nl2sql.yml | schema_retriever.top_k / threshold | 检索表数 / 小库退化阈值 | 生效 |
+| nl2sql.yml | relation.infer_by_naming / verify_inferred | 关系图谱命名推断 / 采样验证开关（默认均 true） | 生效 |
+| nl2sql.yml | fanout.mode | 扇出检测模式 off / static（默认）/ dynamic | 生效 |
 | nl2sql.yml | result.truncate_rows | 预留（结果截断实际读 database.yml result_row_limit） | 预留 |
 | semantic_map.yml | 术语映射表 | 表/字段/指标/条件四类 | 生效 |
 | optimizer.yml | eval_cases / allow_write_back | 评估用例数 / 写回开关 | 生效 |

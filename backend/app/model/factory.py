@@ -7,7 +7,10 @@ from typing import List, Optional
 from openai import OpenAI
 
 from app.utils.config_handler import load_yaml
+from app.utils.logger_handler import setup_logger
 from app.utils.path_tool import BACKEND_ROOT
+
+logger = setup_logger()
 
 
 @dataclass
@@ -20,6 +23,7 @@ class LLMResult:
     completion_tokens: int = 0
     total_tokens: int = 0
     model: str = ""
+    finish_reason: str = ""                   # stop/length/content_filter…（空 content 诊断用）
 
     @property
     def usage(self) -> dict:
@@ -41,15 +45,34 @@ class LLMClient:
         self.client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout)
 
     def chat(self, messages: List[dict], temperature: Optional[float] = None) -> LLMResult:
-        """同步调用；messages 为 OpenAI 格式 [{role, content}]"""
-        resp = self.client.chat.completions.create(
+        """同步调用；messages 为 OpenAI 格式 [{role, content}]。
+        推理模型思考过长会耗尽 max_tokens 导致正文为空（finish_reason=length），
+        此时按 4×/16× 两级扩容重试"""
+        result = self._to_result(self._create(messages, temperature, self.max_tokens))
+        for scale in (4, 16):
+            if result.content:
+                return result
+            logger.warning(
+                "LLM 返回空正文（finish_reason=%s, reasoning=%d字, completion_tokens=%d），%d× 扩容重试",
+                result.finish_reason, len(result.reasoning), result.completion_tokens, scale,
+            )
+            result = self._to_result(self._create(messages, temperature, self.max_tokens * scale))
+        if not result.content:
+            logger.error("扩容重试后仍为空正文（finish_reason=%s）", result.finish_reason)
+        return result
+
+    def _create(self, messages: List[dict], temperature: Optional[float], max_tokens: int):
+        return self.client.chat.completions.create(
             model=self.model,
             messages=messages,
             temperature=self.temperature if temperature is None else temperature,
-            max_tokens=self.max_tokens,
+            max_tokens=max_tokens,
         )
+
+    def _to_result(self, resp) -> LLMResult:
         msg = resp.choices[0].message if resp.choices else None
         usage = resp.usage
+        finish = resp.choices[0].finish_reason if resp.choices else ""
         return LLMResult(
             content=(msg.content or "") if msg else "",
             reasoning=getattr(msg, "reasoning_content", None) or "" if msg else "",
@@ -57,6 +80,7 @@ class LLMClient:
             completion_tokens=getattr(usage, "completion_tokens", 0) if usage else 0,
             total_tokens=getattr(usage, "total_tokens", 0) if usage else 0,
             model=self.model,
+            finish_reason=finish or "",
         )
 
 
@@ -93,7 +117,7 @@ class ModelFactory:
             base_url=cfg["base_url"],
             model=cfg["model"],
             temperature=cfg.get("temperature", 0.0),
-            max_tokens=cfg.get("max_tokens", 2048),
+            max_tokens=cfg.get("max_tokens", 4096),
             timeout=cfg.get("timeout", 60),
         )
 

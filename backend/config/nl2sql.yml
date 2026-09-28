@@ -6,3 +6,10 @@ result:
 schema_retriever:
   top_k: 5             # 检索注入的相关表数量
   threshold: 30        # 表数低于该值退化为全量拼接（检索收益低于注意力代价）
+relation:
+  infer_by_naming: true # 无显式外键时按严格命名约定推断关联键（xxx_id / 同名主键列）
+  verify_inferred: true   # 推断边在真实数据上采样 JOIN 验证，剔除臆想关系（失败时仅保留显式 FK）
+fanout:
+  # JOIN 扇出检测模式：off 关闭 / static 仅 AST 风险提示（零数据库开销）/
+  # dynamic AST 命中后再执行 COUNT(*) vs COUNT(DISTINCT 主键) 计数确认
+  mode: static

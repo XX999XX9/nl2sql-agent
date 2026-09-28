@@ -19,6 +19,7 @@ class SchemaManager:
         self._db_config = load_yaml(BACKEND_ROOT / "config" / "database.yml")["database"]
         self._tables: Dict[str, List[dict]] = {}   # 表名 -> 字段列表
         self._table_comments: Dict[str, str] = {}
+        self._foreign_keys: Dict[str, List[dict]] = {}  # 表名 -> 外键列表（见 refresh 中结构）
         self._context: str = ""
         self.refresh()
 
@@ -51,8 +52,32 @@ class SchemaManager:
                         "key": key,          # PRI / UNI / MUL / ''
                         "comment": comment or "",
                     })
+
+                # 显式外键：REFERENTIAL_CONSTRAINTS 定位外键约束，KEY_COLUMN_USAGE
+                # 给出"本表列 → 被引用表.列"映射（复合外键按 ORDINAL_POSITION 顺序）
+                self._foreign_keys = {name: [] for (name, _c) in tables}
+                cur.execute(
+                    "SELECT kcu.TABLE_NAME, kcu.COLUMN_NAME, "
+                    "kcu.REFERENCED_TABLE_NAME, kcu.REFERENCED_COLUMN_NAME "
+                    "FROM information_schema.REFERENTIAL_CONSTRAINTS rc "
+                    "JOIN information_schema.KEY_COLUMN_USAGE kcu "
+                    "  ON rc.CONSTRAINT_SCHEMA = kcu.CONSTRAINT_SCHEMA "
+                    " AND rc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME "
+                    "WHERE rc.CONSTRAINT_SCHEMA = %s "
+                    "ORDER BY kcu.TABLE_NAME, kcu.ORDINAL_POSITION",
+                    (self._db_config["name"],),
+                )
+                for tbl, col, ref_tbl, ref_col in cur.fetchall():
+                    self._foreign_keys.setdefault(tbl, []).append({
+                        "column": col,
+                        "ref_table": ref_tbl,
+                        "ref_column": ref_col,
+                    })
             self._context = self._build_context()
-            logger.info("Schema 解析完成：%d 张表", len(self._tables))
+            logger.info(
+                "Schema 解析完成：%d 张表，%d 条显式外键",
+                len(self._tables), sum(len(v) for v in self._foreign_keys.values()),
+            )
         finally:
             conn.close()
 
@@ -105,13 +130,18 @@ class SchemaManager:
         return self._build_context_for_tables(tables)
 
     def schema_fingerprint(self) -> str:
-        """当前库全部表结构的 MD5 指纹（供检索器检测表结构变更、自动重建索引）"""
+        """当前库全部表结构的 MD5 指纹（供检索器/关系图谱检测结构变更、自动重建）"""
         import hashlib
         payload = {
             tbl: [{"c": c["name"], "t": c["type"], "k": c["key"], "m": c["comment"]}
                   for c in cols]
             for tbl, cols in sorted(self._tables.items())
         }
+        # 外键也纳入指纹：外键增删必须触发关系图谱重建
+        payload["__fks__"] = [
+            [fk["table"], fk["column"], fk["ref_table"], fk["ref_column"]]
+            for fk in sorted(self.all_foreign_keys(), key=lambda x: (x["table"], x["column"]))
+        ]
         return hashlib.md5(repr(payload).encode()).hexdigest()
 
     def get_table_names(self) -> List[str]:
@@ -119,3 +149,18 @@ class SchemaManager:
 
     def get_table(self, table_name: str) -> List[dict]:
         return self._tables.get(table_name, [])
+
+    def get_foreign_keys(self, table_name: str) -> List[dict]:
+        """该表声明的显式外键：[{column, ref_table, ref_column}]（外键所在表为"多端"）"""
+        return list(self._foreign_keys.get(table_name, []))
+
+    def all_foreign_keys(self) -> List[dict]:
+        """全库显式外键边（含表名）：[{table, column, ref_table, ref_column}]"""
+        return [
+            {"table": tbl, **fk}
+            for tbl, fks in self._foreign_keys.items() for fk in fks
+        ]
+
+    def get_primary_keys(self, table_name: str) -> List[str]:
+        """该表主键列名列表（单列主键常见；复合主键返回多列）"""
+        return [c["name"] for c in self._tables.get(table_name, []) if c["key"] == "PRI"]

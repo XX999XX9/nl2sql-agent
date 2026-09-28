@@ -32,31 +32,48 @@ class GenerationResult:
 class SQLGenerator:
     """Prompt 组装 + LLM 调用 + SQL 提取；支持 query（SELECT）与 dml（仅生成不执行）两种模板"""
 
-    def __init__(self, llm: LLMClient, schema_manager: SchemaManager):
+    def __init__(self, llm: LLMClient, schema_manager: SchemaManager,
+                 relation_graph=None):
         self.llm = llm
         self.schema_manager = schema_manager
+        self.relation_graph = relation_graph   # 表关联关系图谱（None 时不注入关联区块）
         self._system_prompt = read_text(BACKEND_ROOT / "prompts" / "system_prompt.txt").strip()
         self._template = read_text(BACKEND_ROOT / "prompts" / "nl2sql_prompt.txt")
         self._dml_template = read_text(BACKEND_ROOT / "prompts" / "dml_prompt.txt")
 
     def generate(self, question: str, extra_context: str = "", mode: str = "query",
-                 tables: Optional[List[str]] = None) -> GenerationResult:
+                 tables: Optional[List[str]] = None,
+                 conversation_context: str = "",
+                 reference_context: str = "") -> GenerationResult:
         """组装 Prompt 调用 LLM 并提取 SQL；
-        extra_context 供注入多轮/值链接/术语上下文；
+        query 模式：多轮上下文经 {conversation_context} 紧跟用户问题，
+        术语映射/值链接经 {reference_context} 置于表结构之后（模板内固定位置）；
+        extra_context 仅 dml 模式使用（前置拼接，dml 模板无对应占位符）；
         mode=query 生成 SELECT，mode=dml 生成增删改语句（仅展示不执行）；
         tables 为 Schema 检索命中的表集合（None=全量 Schema 注入）"""
-        template = self._dml_template if mode == "dml" else self._template
         schema_context = (
             self.schema_manager.schema_context
             if tables is None
             else self.schema_manager.build_context_for_tables(tables)
         )
-        user_prompt = template.format(
-            schema_context=schema_context,
-            question=question,
-        )
-        if extra_context:
-            user_prompt = f"{extra_context}\n\n{user_prompt}"
+        if mode == "dml":
+            template = self._dml_template
+            user_prompt = template.format(schema_context=schema_context, question=question)
+            if extra_context:
+                user_prompt = f"{extra_context}\n\n{user_prompt}"
+        else:
+            template = self._template
+            relation_context = (
+                self.relation_graph.build_context_for_tables(tables)
+                if self.relation_graph else ""
+            )
+            user_prompt = template.format(
+                schema_context=schema_context,
+                relation_context=relation_context,
+                question=question,
+                conversation_context=conversation_context,
+                reference_context=reference_context,
+            )
 
         result = self.llm.chat([
             {"role": "system", "content": self._system_prompt},

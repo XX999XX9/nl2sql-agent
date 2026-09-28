@@ -25,8 +25,9 @@ class SQLValidationError(Exception):
 class SQLValidator:
     """AST 级 SQL 静态校验器"""
 
-    def __init__(self, schema_manager: SchemaManager):
+    def __init__(self, schema_manager: SchemaManager, check_cartesian: bool = True):
         self.schema_manager = schema_manager
+        self.check_cartesian = check_cartesian   # 无 ON/USING 的 JOIN（笛卡尔积）拦截开关
 
     def validate(self, sql: str):
         """校验失败抛 SQLValidationError；通过则返回解析后的语句节点"""
@@ -46,6 +47,20 @@ class SQLValidator:
             raise SQLValidationError(
                 f"仅支持 SELECT 查询，当前语句类型为 {type(stmt).__name__}", kind="syntax"
             )
+
+        # 0. 无关联条件的 JOIN（笛卡尔积）：FROM a, b / JOIN b 无 ON/USING 均拦截；
+        #    显式 CROSS JOIN 与 NATURAL JOIN 放行（意图明确，NL2SQL 中极少见）
+        if self.check_cartesian:
+            for join in stmt.find_all(exp.Join):
+                if join.kind == "CROSS" or join.args.get("natural"):
+                    continue
+                if join.args.get("on") is None and join.args.get("using") is None:
+                    raise SQLValidationError(
+                        "存在没有 ON/USING 关联条件的 JOIN（会产生笛卡尔积，结果行数被成倍放大）。"
+                        "请为 JOIN 补充正确的等值关联条件（参考【表关联关系】中的关联键）；"
+                        "如确需笛卡尔积请使用显式 CROSS JOIN 语法",
+                        kind="join",
+                    )
 
         valid_tables: Set[str] = set(self.schema_manager.get_table_names())
         # 查询内自定义的 CTE 名视为合法"表"

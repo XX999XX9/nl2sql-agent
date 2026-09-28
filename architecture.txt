@@ -28,24 +28,26 @@ nl2sql-agent/
 │   │   │
 │   │   ├── nl2sql/                         # NL2SQL 核心模块（自然语言转SQL主链路）
 │   │   │   ├── __init__.py                 # 暴露NL2SQLPipeline统一编排入口
-│   │   │   ├── pipeline.py                 # 流水线编排器：意图分类分流 → query：上下文增强（多轮上下文+Schema检索+术语映射+值链接）→SQL生成→静态校验→安全守卫→执行→0行值缺失诊断→自动纠错循环（最多N轮）→结果缓存→解释生成；dml：专用模板仅生成不执行；meta：基于Schema直接LLM回答。每步经TurnTracker埋点，iter_run以生成器形式逐步产出SSE事件，run()消费同一生成器返回聚合结果（单一事实来源）
+│   │   │   ├── pipeline.py                 # 流水线编排器（LangGraph StateGraph）：意图分类分流 → query：上下文增强（多轮上下文+Schema检索+术语映射+值链接+候选表沿关系图谱1跳邻接扩展）→SQL生成→静态校验→安全守卫→JOIN扇出检测→执行→0行值缺失诊断→自动纠错循环（q_validate/q_fanout⇄q_correct，最多N轮，扇出纠错只触发一次防死循环）→结果缓存→解释生成；dml：专用模板仅生成不执行；meta：基于Schema直接LLM回答；三分支汇合finalize（usage统计+记轮次+done）。节点+条件边由LangGraph调度，每步经TurnTracker埋点，节点内经custom流通道_emit SSE事件，iter_run透出事件流、run()消费返回聚合结果（单一事实来源）
 │   │   │   ├── intent_classifier.py        # 意图分类前置：区分 查询(query)/增删改(dml)/元信息(meta) 三类；关键词正则快路径（明显诉求不调LLM）+ LLM兜底，任何异常兜底query
 │   │   │   ├── conversation.py             # 多轮对话上下文管理：保存每轮{问题,SQL,涉及表,意图,解释,结果快照,usage}；追问时将上一轮SQL显式注入Prompt，支持"查今年销售额"→"按月份分组"类省略式追问；last_tables供多轮表保留；JSON文件持久化（data/session_store.json，服务重启不丢），会话TTL 24h过期清理
-│   │   │   ├── schema_manager.py           # Schema自动解析：读取information_schema的表名/字段/类型/主键索引/注释，结构化为内部元数据，拼装Prompt上下文文本；refresh()手动刷新（配置schema_refresh_interval定时刷新预留未接线）；schema_fingerprint()指纹供检索器检测表结构变更自动重建索引；build_context_for_tables()限定表集合拼接
+│   │   │   ├── schema_manager.py           # Schema自动解析：读取information_schema的表名/字段/类型/主键索引/注释（含REFERENTIAL_CONSTRAINTS+KEY_COLUMN_USAGE显式外键查询，产出{table,column,ref_table,ref_column}），结构化为内部元数据，拼装Prompt上下文文本；refresh()手动刷新（配置schema_refresh_interval定时刷新预留未接线）；schema_fingerprint()指纹（含外键）供检索器/关系图谱检测结构变更自动重建；get_foreign_keys/all_foreign_keys/get_primary_keys供关系图谱消费；build_context_for_tables()限定表集合拼接
 │   │   │   ├── schema_retriever.py         # Schema向量检索（大库场景，features.schema_retriever开关，默认关）：表名/字段/注释向量化入Chroma持久索引，提问时检索Top-K相关表注入Prompt；小库（表数<threshold）自动退化全量；指纹变化自动重建；快照指纹一致时跳过重复embedding；任何失败返回None走全量不阻断主链路
+│   │   │   ├── relation_graph.py           # 表关联关系图谱（features.relation_graph开关，默认开）：三级数据源建图——①显式外键（100%可信）②严格命名约定推断（xxx_id列→xxx表主键/同名列恰一端主键，排除name/status等通用列）③推断边真实数据采样JOIN验证（200行采样、匹配率≥5%保留，剔除巧合重合的臆想边，验证通道整体失败仅保留显式FK）；RelationEdge有向存储child多端→parent一端；落盘data/relation_store/relations.json按schema指纹失效；查询能力：build_context_for_tables生成Prompt【表关联关系】区块（贪心BFS连通候选表）、neighbors 1跳邻接扩展召回、shortest_path BFS最短JOIN路径、is_many_to_one扇出方向判断、unknown_join_warnings解析JOIN ON是否用已知关联键（仅告警）；任何异常降级空图不阻断主链路
 │   │   │   ├── value_linker.py             # 值链接（features.value_linker开关）：对库中字符串列做DISTINCT采样缓存（TTL 1h），对问题做精确+模糊匹配（SequenceMatcher字符相似度，覆盖库值60%以上命中），将"机器键盘→机械键盘"类表述映射为库中真实值注入Prompt；get_column_values/has_value供纠错诊断复用
 │   │   │   ├── term_mapper.py              # 业务术语映射（语义层）：读取semantic_map.yml，识别问题中业务术语按最长匹配去重，将"营收→SUM(total_money)"类业务黑话翻译为表/字段/聚合/条件四类表达注入Prompt
-│   │   │   ├── sql_generator.py            # SQL生成核心：组装Prompt（extra_context前置+模板+Schema上下文+用户问题）调用LLM；query/dml双模板；tables参数支持Schema检索命中表子集注入；从输出提取SQL（```sql块→任意代码块→裸语句兜底），返回结构化结果含token usage
-│   │   │   ├── sql_validator.py            # SQL静态校验：sqlglot AST解析——多条语句拼接拦截、表名/字段名真实存在校验（防幻觉表/字段，CTE名视为合法表，别名/派生列跳过静态验证）；失败产出结构化错误（kind: syntax/table/column）供纠错链路回喂
+│   │   │   ├── sql_generator.py            # SQL生成核心：组装Prompt（extra_context前置+模板+Schema上下文+【表关联关系】区块+用户问题）调用LLM；query/dml双模板（dml模板无relation占位符单独format）；tables参数支持Schema检索命中表子集注入，关系图谱据此只注入候选表间的关联边；从输出提取SQL（```sql块→任意代码块→裸语句兜底），返回结构化结果含token usage
+│   │   │   ├── sql_validator.py            # SQL静态校验：sqlglot AST解析——多条语句拼接拦截、无ON/USING的JOIN笛卡尔积拦截（features.join_static_check开关，逗号连接FROM a,b同样拦截，显式CROSS/NATURAL JOIN意图明确放行，错误kind=join回喂纠错）、表名/字段名真实存在校验（防幻觉表/字段，CTE名视为合法表，别名/派生列跳过静态验证）；失败产出结构化错误（kind: syntax/table/column/join）供纠错链路回喂
 │   │   │   ├── sql_guard.py                # 安全守卫：关键词粗筛（含注释剥离防绕过）+ AST细筛（解析失败/多语句/非SELECT拦截）双重过滤；SELECT自动追加强制LIMIT（forced_limit）；与数据库只读账号形成双保险
+│   │   │   ├── fanout_checker.py           # JOIN扇出检测（features.fanout_check总开关+nl2sql.yml fanout.mode=off/static/dynamic）：关系图谱给出多对一方向后做AST风险识别——全局COUNT(*)与一端表列SUM/AVG危险（GROUP BY一端主键时的COUNT(*)属每组计数放行），COUNT/SUM(DISTINCT)与多端列聚合安全；static零数据库开销产中文风险提示，dynamic再执行AST改写的COUNT(*) vs COUNT(DISTINCT驱动表主键)计数对比确认放大倍数；无法分析（UNION/派生表/复合主键）一律放行；只触发一次纠错、不直接终止查询
 │   │   │   ├── sql_executor.py             # SQL执行：SQLAlchemy连接池+PyMySQL、SET max_execution_time超时控制、错误分类（syntax/permission/timeout/other供纠错消费）、结果行数截断（result_row_limit）与行数据规范化（datetime→ISO、Decimal→float）；截断时COUNT(*)包装查真实总行数（未截断total=-1由pipeline填行数）
 │   │   │   ├── result_cache.py             # 结果缓存：query_id→结果集（LRU容量50+TTL 30分钟淘汰），get_page分页读取支撑前端翻页与CSV导出；由pipeline执行成功后写入
-│   │   │   ├── self_corrector.py           # 自动纠错链路（features.self_correction开关）：诊断+回喂重写——执行/校验失败回喂错误重写SQL；diagnose_zero_row诊断0行结果中WHERE等值条件值不在库采样值中（合法0行不触发），值缺失时把该列真实取值一并回喂让模型改用正确值；每轮重写产物仍需过校验+守卫；最多N轮（nl2sql.yml correction.max_rounds）
+│   │   │   ├── self_corrector.py           # 自动纠错链路（features.self_correction开关）：诊断+回喂重写——执行/校验失败（含笛卡尔积kind=join、JOIN扇出风险）回喂错误重写SQL，rewrite()接收候选表以注入关系键区块；diagnose_zero_row诊断0行结果中WHERE等值条件值不在库采样值中（合法0行不触发），值缺失时把该列真实取值一并回喂让模型改用正确值；每轮重写产物仍需过校验+守卫；最多N轮（nl2sql.yml correction.max_rounds）
 │   │   │   └── sql_explainer.py            # SQL解释生成：调用LLM将最终SQL翻译为业务化中文阐释（用到的表/条件/聚合/排序）；失败返回空串不阻断主链路（解释是增益能力）
 │   │   │
 │   │   ├── model/                          # 模型层
 │   │   │   ├── __init__.py                 # model包初始化（空）
-│   │   │   └── factory.py                  # 模型工厂：从agent.yml读配置创建LLMClient（OpenAI兼容Chat Completions封装，统一返回content+token usage）/EmbeddingClient（向量化，百炼单批≤10条自动分批）；LLMResult含reasoning字段兼容推理模型
+│   │   │   └── factory.py                  # 模型工厂：从agent.yml读配置创建LLMClient（OpenAI兼容Chat Completions封装，统一返回content+finish_reason+token usage）/EmbeddingClient（向量化，百炼单批≤10条自动分批）；LLMResult含reasoning字段兼容推理模型；空正文检测：推理模型思考耗尽max_tokens时按4×/16×两级扩容自动重试
 │   │   │
 │   │   ├── optimizer/                      # 提示词优化模块（features.prompt_optimize开关控制路由注册）
 │   │   │   ├── __init__.py                 # 暴露PromptOptimizer
@@ -73,17 +75,17 @@ nl2sql-agent/
 │   │   │
 │   ├── config/                             # 配置文件目录（YAML格式，敏感值经${VAR}从.env插值）
 │   │   ├── database.yml                    # 数据库配置：MySQL只读账号连接、连接池(pool_size/max_overflow/pool_recycle)、执行超时(30s)、强制LIMIT(1000)、结果截断行数(1000)、Schema刷新周期(schema_refresh_interval预留未接线)
-│   │   ├── nl2sql.yml                      # NL2SQL配置：correction.max_rounds纠错最大轮数、schema_retriever.top_k检索表数/threshold小库退化阈值、result.truncate_rows(预留，实际读database.yml result_row_limit)
+│   │   ├── nl2sql.yml                      # NL2SQL配置：correction.max_rounds纠错最大轮数、schema_retriever.top_k检索表数/threshold小库退化阈值、relation.infer_by_naming/verify_inferred关系图谱命名推断与采样验证开关、fanout.mode扇出检测模式(off/static/dynamic)、result.truncate_rows(预留，实际读database.yml result_row_limit)
 │   │   ├── semantic_map.yml                # 语义映射配置：业务术语→表/字段/聚合/条件四类映射表
-│   │   ├── agent.yml                       # Agent配置：llm.*(模型/温度/max_tokens/超时)、embedding.*(百炼text-embedding-v3)、features六开关（metrics_enabled/intent_classifier/value_linker/schema_retriever/self_correction/prompt_optimize）
+│   │   ├── agent.yml                       # Agent配置：llm.*(模型/温度/max_tokens/超时)、embedding.*(百炼text-embedding-v3)、features九开关（metrics_enabled/intent_classifier/value_linker/schema_retriever/self_correction/prompt_optimize + JOIN治理三开关relation_graph/join_static_check/fanout_check）
 │   │   └── optimizer.yml                   # 优化模块配置：eval_cases评估用例数(3)、allow_write_back写回开关(default_strategy预留未接线)
 │   │
 │   ├── prompts/                            # 提示词模板目录（优化工作台可写回，.bak自动备份）
 │   │   ├── system_prompt.txt               # 系统提示词：SQL生成时的整体角色与行为规范总设定
-│   │   ├── nl2sql_prompt.txt               # NL2SQL生成主提示词：{schema_context}{question}占位，SQL书写规范与输出格式约定
+│   │   ├── nl2sql_prompt.txt               # NL2SQL生成主提示词：{schema_context}{relation_context}（表关联关系区块）{question}占位，JOIN必须用已知关联键/禁笛卡尔积、LEFT JOIN语义、先聚合多端防扇出等规则与2个JOIN少样本，SQL书写规范与输出格式约定
 │   │   ├── dml_prompt.txt                  # DML生成提示词：写操作专用模板（仅生成不执行分支）
 │   │   ├── intent_prompt.txt               # 意图分类提示词：{question}占位，query/dml/meta类别判定
-│   │   ├── correct_prompt.txt              # 纠错重写提示词：{schema_context}{question}{sql}{error}占位，错误回喂重写指令
+│   │   ├── correct_prompt.txt              # 纠错重写提示词：{schema_context}{relation_context}{question}{sql}{error}占位，含JOIN关联键/LEFT JOIN/扇出纠错指引，错误回喂重写指令
 │   │   ├── explain_prompt.txt              # SQL解释提示词：{schema_context}{sql}占位，面向业务用户的阐释风格
 │   │   └── prompt_optimize_prompt.txt      # 元提示词：指导LLM优化提示词的提示词（受保护不可被覆盖）
 │   │
@@ -97,7 +99,7 @@ nl2sql-agent/
 │   │   └── agent.log                       # 主日志（按日轮转保留30天）
 │   │
 │   ├── run.py                              # 启动脚本：以uvicorn启动FastAPI（host/port/debug从环境变量读取）
-│   ├── requirements.txt                    # 后端依赖：fastapi、uvicorn、pydantic、sqlglot、sqlalchemy+pymysql/aiomysql、openai、chromadb、tiktoken、PyYAML
+│   ├── requirements.txt                    # 后端依赖：fastapi、uvicorn、pydantic、sqlglot、sqlalchemy+pymysql/aiomysql、openai、langgraph（流水线编排）、chromadb、tiktoken、PyYAML
 │   └── Dockerfile                          # （待补充：docker-compose.yml backend服务引用./backend构建，但Dockerfile尚未提供）
 │
 ├── frontend/                               # 前端工程根目录（HTML/CSS/JS原生实现，无构建步骤）
@@ -141,6 +143,6 @@ nl2sql-agent/
 │   ├── start_frontend.sh                   # 前端启动脚本：开发环境起静态服务器/加载Nginx
 │   └── init_schema_cache.sh                # 预热脚本：解析表结构+构建Schema向量索引（--force强制重建）；仅features.schema_retriever开启时有意义
 │
-├── README.md                               # 项目说明：功能介绍、配置表、启动指南、接口文档、FAQ
+├── README.md                               # 项目说明：功能介绍、配置表、启动指南、接口文档、FAQ（流水线基于 LangGraph 编排）
 ├── 项目说明书.md                            # 详细说明书：全链路图、节点与条件边、开关、模型调用、文件分类注释（gitignore，不入库）
 └── 产品文档.txt                             # 产品需求文档（gitignore，不入库）

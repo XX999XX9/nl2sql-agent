@@ -33,6 +33,8 @@ class TermMapper:
 
         for m in self._mappings:
             term = m["term"]
+            if not term:
+                continue   # 防御：空 term 会使 find 永远命中当前位置导致死循环
             start = 0
             while True:
                 idx = question.find(term, start)

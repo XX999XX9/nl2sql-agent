@@ -7,7 +7,7 @@ llm:
   base_url: ${BAILIAN_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
   model: ${BAILIAN_MODEL:-qwen-plus}
   temperature: 0.0
-  max_tokens: 2048
+  max_tokens: 8192
   timeout: 60                          # 单次调用超时（秒）
 
 embedding:
@@ -19,8 +19,11 @@ embedding:
 # 各功能模块开关
 features:
   metrics_enabled: true                # 运行指标统计
-  intent_classifier: true              # 意图分类前置
-  value_linker: true                   # 实体值链接
-  schema_retriever: false              # Schema 向量检索（大库 Top-K 表注入；设 true 开启，小库自动退化全量）
-  self_correction: true                # 自动纠错链路
-  prompt_optimize: true                # 提示词优化工作台
+  intent_classifier: true            # 意图分类前置
+  value_linker: true                # 实体值链接
+  schema_retriever: false            # Schema 向量检索（大库 Top-K 表注入；设 true 开启，小库自动退化全量）
+  self_correction: true             # 自动纠错链路
+  prompt_optimize: true             # 提示词优化工作台
+  relation_graph: true               # 表关联关系图谱（显式外键+命名推断+采样验证，注入 Prompt 关联键）
+  join_static_check: true            # 无 ON 笛卡尔积 AST 拦截 + JOIN 关联键告警
+  fanout_check: true                # JOIN 扇出（一对多放大聚合）检测

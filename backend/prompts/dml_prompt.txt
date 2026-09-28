@@ -2,6 +2,9 @@
 
 【重要】该 SQL 仅用于展示，绝对不会被执行。你只需按用户需求生成规范的 SQL。
 
+【用户需求】
+{question}
+
 【表结构】
 {schema_context}
 
@@ -11,5 +14,4 @@
 3. WHERE 条件尽量收窄影响范围（优先按主键或用户指定的条件），避免无条件的全表操作。
 4. 生成的语句类型由用户需求决定（INSERT/UPDATE/DELETE/CREATE/ALTER/DROP 等）。
 
-【用户需求】
-{question}
+
