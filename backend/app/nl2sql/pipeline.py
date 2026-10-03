@@ -34,6 +34,7 @@ from app.formatter.output_formatter import OutputFormatter
 from app.metrics.turn_tracker import TurnTracker
 from app.model.factory import ModelFactory
 from app.nl2sql.conversation import ConversationManager
+from app.nl2sql.explain_gate import ExplainGate
 from app.nl2sql.fanout_checker import FanoutChecker
 from app.nl2sql.intent_classifier import IntentClassifier
 from app.nl2sql.relation_graph import RelationGraph
@@ -43,6 +44,8 @@ from app.nl2sql.schema_retriever import SchemaRetriever
 from app.nl2sql.self_corrector import SelfCorrector
 from app.nl2sql.sql_executor import SQLExecutor, SQLExecutionError
 from app.nl2sql.sql_explainer import SQLExplainer
+from app.nl2sql.table_selector import TableSelector
+from app.nl2sql.capabilities.layer import build_capability_layer
 from app.nl2sql.sql_generator import SQLGenerator
 from app.nl2sql.sql_guard import SQLGuard, SQLGuardError
 from app.nl2sql.sql_validator import SQLValidator, SQLValidationError
@@ -76,7 +79,9 @@ class PipelineResult:
     usage: dict = field(default_factory=dict)
     term_mappings: List[dict] = field(default_factory=list)
     value_mappings: List[dict] = field(default_factory=list)
-    correction_trail: List[dict] = field(default_factory=list)   # 纠错轨迹：每轮 {round, error, sql}
+    correction_trail: List[dict] = field(default_factory=list)   # 语义/校验纠错轨迹（评测 corrections 口径）
+    optimization_trail: List[dict] = field(default_factory=list) # EXPLAIN 性能优化轨迹（独立计数）
+    capability_trail: List[dict] = field(default_factory=list)   # Skill/Tool 申请轨迹（供调用正确率/误用率评测）
     error: Optional[str] = None
     error_kind: Optional[str] = None
     session_id: Optional[str] = None
@@ -96,6 +101,8 @@ class NL2SQLState(TypedDict, total=False):
     conversation_context: str     # 多轮上下文（模板中紧跟用户问题）
     reference_context: str        # 术语映射/值链接（模板中置于表结构之后）
     candidate_tables: Optional[List[str]]   # Schema 检索命中的候选表
+    selected_schema: str          # 第一阶段表字段识别裁剪后的 Schema 文本（空=回退全量）
+    table_selection: dict         # 表字段识别结构化结果（日志/观测用）
     fanout_waived: bool         # 当前 SQL 已经 LLM 裁决为扇出误报，跳过扇出检测；
                                 # 任何纠错重写产生新 SQL 后必须清除（在 q_correct 节点）
     route: str                    # 当前节点决定的下一跳（条件边消费）
@@ -136,6 +143,8 @@ class NL2SQLPipeline:
         # 表关联关系图谱（显式外键 + 命名推断 + 采样验证；构建失败内部降级为空图）
         self.relation_graph = RelationGraph(self.schema_manager) if features.get("relation_graph", True) else None
         self.generator = SQLGenerator(self.llm, self.schema_manager, self.relation_graph)
+        # 第一阶段表字段识别（query 主链；失败自动回退全量 Schema）
+        self.table_selector = TableSelector(self.llm, self.schema_manager, self.relation_graph)
         self.validator = SQLValidator(
             self.schema_manager, check_cartesian=features.get("join_static_check", True),
         )
@@ -146,6 +155,15 @@ class NL2SQLPipeline:
             FanoutChecker(self.relation_graph, self.executor, mode=fanout_mode)
             if features.get("fanout_check", True) else FanoutChecker(None, self.executor, mode="off")
         )
+        explain_cfg = nl2sql_cfg.get("explain", {})
+        self.explain_gate = ExplainGate(
+            self.executor,
+            large_table_rows=int(explain_cfg.get("large_table_rows", 10000)),
+            max_opt_rounds=int(explain_cfg.get("max_opt_rounds", 2)),
+            enabled=features.get("explain_gate", True),
+        )
+        # Skill/Tool 统一能力层：资产注册 + 声明式规则 Gate（fail-closed）+ 申请编排
+        self.capability = build_capability_layer(self.generator, self.schema_manager, nl2sql_cfg)
         self.explainer = SQLExplainer(self.llm, self.schema_manager)
         self.formatter = OutputFormatter()
         self.corrector = SelfCorrector(
@@ -174,6 +192,9 @@ class NL2SQLPipeline:
         # ---- 节点注册 ----
         g.add_node("intent", self._n_intent)
         g.add_node("q_context", self._n_q_context)
+        g.add_node("q_select", self._n_q_select)
+        g.add_node("q_perf", self._n_q_perf)
+        g.add_node("q_opt_correct", self._n_q_opt_correct)
         g.add_node("q_generate", self._n_q_generate)
         g.add_node("q_validate", self._n_q_validate)
         g.add_node("q_guard", self._n_q_guard)
@@ -194,7 +215,8 @@ class NL2SQLPipeline:
         g.add_conditional_edges("intent", self._r_intent,
                                 {"q_context": "q_context", "d_context": "d_context", "m_answer": "m_answer"})
         # query 主链
-        g.add_edge("q_context", "q_generate")
+        g.add_edge("q_context", "q_select")
+        g.add_edge("q_select", "q_generate")
         g.add_conditional_edges("q_generate", self._r_generate,
                                 {"q_validate": "q_validate", "finalize": "finalize"})
         g.add_conditional_edges("q_validate", self._r_validate,
@@ -202,9 +224,16 @@ class NL2SQLPipeline:
         g.add_conditional_edges("q_guard", self._r_guard,
                                 {"q_fanout": "q_fanout", "finalize": "finalize"})
         g.add_conditional_edges("q_fanout", self._r_fanout,
-                                # q_validate：LLM 裁决 risky 后采用其重写 SQL，回全链路复检
-                                {"q_execute": "q_execute", "q_correct": "q_correct",
+                                # q_validate：LLM 裁决 risky 后采用其重写 SQL，回全链路复检；
+                                # 放行统一进 q_perf（EXPLAIN 性能门禁）再到执行
+                                {"q_perf": "q_perf", "q_correct": "q_correct",
                                  "q_validate": "q_validate"})
+        g.add_conditional_edges("q_perf", self._r_perf,
+                                # q_opt_correct：EXPLAIN 命中性能问题且优化轮次未满
+                                {"q_execute": "q_execute", "q_opt_correct": "q_opt_correct"})
+        g.add_conditional_edges("q_opt_correct", self._r_opt_correct,
+                                # 性能重写后回静态校验走全链路复检；重写失败则放行执行不阻断
+                                {"q_validate": "q_validate", "q_execute": "q_execute"})
         g.add_conditional_edges("q_execute", self._r_execute,
                                 {"q_cache": "q_cache", "q_correct": "q_correct", "finalize": "finalize"})
         g.add_conditional_edges("q_correct", self._r_correct,
@@ -239,6 +268,9 @@ class NL2SQLPipeline:
             "extra_context": "",
             "candidate_tables": None,
             "fanout_waived": False,
+            "selected_schema": "",
+            "table_selection": {},
+            "opt_rounds": 0,
             "route": "",
         }
         config = {"configurable": {"thread_id": session_id or uuid.uuid4().hex}}
@@ -313,16 +345,61 @@ class NL2SQLPipeline:
             "candidate_tables": candidate_tables,
         }
 
+    def _n_q_select(self, state: NL2SQLState) -> dict:
+        """第一阶段：表字段识别（LLM 结构化裁剪：needed/maybe/excluded + 字段二分）。
+        成功 → 裁剪后 Schema 文本注入第二阶段；调用/解析/清洗失败 → 空串回退全量 Schema"""
+        tracker = state["tracker"]
+        with tracker.step("表字段识别"):
+            try:
+                sel = self.table_selector.select(
+                    state["question"], tables=state.get("candidate_tables"),
+                )
+            except Exception as e:
+                logger.error("表字段识别节点异常（回退全量 Schema）: %s", str(e).splitlines()[0])
+                sel = None
+        if sel is None:
+            return {"selected_schema": "", "table_selection": {}}
+        tracker.add_tokens(sel.prompt_tokens, sel.completion_tokens, sel.total_tokens)
+        return {
+            "selected_schema": self.table_selector.render_context(sel),
+            "table_selection": {
+                "needed": sel.needed, "maybe": sel.maybe, "excluded": sel.excluded,
+            },
+        }
+
     def _n_q_generate(self, state: NL2SQLState) -> dict:
         result, tracker = state["result"], state["tracker"]
         with tracker.step("SQL生成"):
             try:
-                gen = self.generator.generate(
+                # 生成经能力编排器：模型按需申请 Skill/get_table_schema，一切申请过 Gate
+                cap_out = self.capability.orchestrator.run(
                     state["question"],
                     tables=state["candidate_tables"],
                     conversation_context=state.get("conversation_context", ""),
                     reference_context=state.get("reference_context", ""),
+                    selected_schema=state.get("selected_schema", ""),
+                    candidate_tables=(state["candidate_tables"]
+                                      or self.schema_manager.get_table_names()),
+                    attempt=state.get("attempt", 0),
+                    opt_rounds=state.get("opt_rounds", 0),
                 )
+                gen = cap_out["result"]
+                if cap_out.get("bypass") == "gate_unhealthy":
+                    logger.info("本次生成 bypass 能力层（Gate 不可用，模型自行发挥）")
+                for tr in cap_out["trace"]:
+                    logger.info("能力申请 第%d轮：请求 skills=%s tools=%s；批准=%s；拒绝=%s%s",
+                                tr.round_index, tr.requested_skills, tr.requested_tools,
+                                tr.granted,
+                                [f"{d['kind']}:{d['name']}@{d['rule_id']}" for d in tr.denied],
+                                f"；格式错误：{tr.malformed}" if tr.malformed else "")
+                    result.capability_trail.append({
+                        "round": tr.round_index,
+                        "skills_requested": list(tr.requested_skills),
+                        "tools_requested": list(tr.requested_tools),
+                        "granted": list(tr.granted),
+                        "denied": list(tr.denied),
+                        "malformed": tr.malformed,
+                    })
                 tracker.add_tokens(gen.prompt_tokens, gen.completion_tokens, gen.total_tokens)
             except Exception as e:
                 logger.error("SQL 生成失败: %s", e, exc_info=e)
@@ -389,7 +466,7 @@ class NL2SQLPipeline:
         result, tracker = state["result"], state["tracker"]
         if state.get("fanout_waived"):
             logger.info("扇出检测已裁决放行（fanout_waived），跳过: %s", result.sql[:120])
-            return {"route": "q_execute"}
+            return {"route": "q_perf"}
         with tracker.step("扇出检测"):
             if self.relation_graph and self.relation_graph.ready:
                 try:
@@ -400,12 +477,12 @@ class NL2SQLPipeline:
                     pass
             fanout_msg = self.fanout_checker.check(result.sql)
         if not fanout_msg:
-            return {"route": "q_execute"}
+            return {"route": "q_perf"}
         logger.warning("JOIN 扇出%s: %s | SQL: %s",
                        "确认" if "确认" in fanout_msg else "风险", fanout_msg[:80], result.sql[:120])
         if state["attempt"] >= state["max_rounds"]:
-            logger.info("扇出告警但纠错轮次耗尽，放行执行")
-            return {"route": "q_execute"}
+            logger.info("扇出告警但纠错轮次耗尽，放行进入性能门禁")
+            return {"route": "q_perf"}
 
         with tracker.step("扇出裁决"):
             try:
@@ -424,7 +501,7 @@ class NL2SQLPipeline:
         logger.info("扇出裁决结果 verdict=%s：%s", verdict, reason)
         if verdict == "safe":
             # safe 不写 correction_trail：trail 长度即评测 corrections 口径，只记真实重写
-            return {"route": "q_execute", "fanout_waived": True}
+            return {"route": "q_perf", "fanout_waived": True}
         if verdict == "risky" and rewritten:
             cur_norm = result.sql.strip().rstrip(";").strip()
             if rewritten.strip().rstrip(";").strip() != cur_norm:
@@ -440,6 +517,64 @@ class NL2SQLPipeline:
         return {"route": "q_correct", "error_message": fanout_msg}
 
     def _r_fanout(self, state: NL2SQLState) -> str:
+        return state["route"]
+
+    def _n_q_perf(self, state: NL2SQLState) -> dict:
+        """EXPLAIN 性能门禁：执行前检测；大表 type=ALL 且 key=NULL 且优化轮次未满
+        → q_opt_correct 回喂重写（独立 opt_rounds，不计入语义纠错）；
+        通过 / EXPLAIN 失败 / 优化轮次耗尽 → q_execute（耗尽仍命中仅告警，不阻断）"""
+        result, tracker = state["result"], state["tracker"]
+        if not self.explain_gate.enabled:
+            return {"route": "q_execute"}
+        with tracker.step("性能门禁"):
+            verdict = self.explain_gate.inspect(result.sql)
+        if not verdict.get("ok") or not verdict.get("blocked"):
+            return {"route": "q_execute"}
+        if state["opt_rounds"] < self.explain_gate.max_opt_rounds:
+            logger.warning("EXPLAIN 性能门禁命中，进入性能优化第 %d 轮（worst_type=%s）",
+                           state["opt_rounds"] + 1, verdict["worst_type"])
+            return {"route": "q_opt_correct", "error_message": verdict["message"]}
+        logger.warning("EXPLAIN 性能门禁第 %d 次检测仍命中（优化轮次已耗尽），放行执行: %s",
+                       state["opt_rounds"] + 1, result.sql[:120].replace("\n", " "))
+        return {"route": "q_execute"}
+
+    def _r_perf(self, state: NL2SQLState) -> str:
+        return state["route"]
+
+    def _n_q_opt_correct(self, state: NL2SQLState) -> dict:
+        """性能优化重写：独立 opt_rounds 计数，只写 optimization_trail，
+        不增 attempt、不写 correction_trail（评测 corrections 口径不受影响）；
+        重写后回 q_validate 经守卫/扇出/性能门禁全链路复检；重写失败放行执行不阻断"""
+        result, tracker = state["result"], state["tracker"]
+        opt_round = state["opt_rounds"] + 1
+        with tracker.step("性能优化"):
+            try:
+                rewritten, usage = self.corrector.rewrite(
+                    state["question"], result.sql, state["error_message"],
+                    extra_context=state.get("extra_context", ""),
+                    tables=state.get("candidate_tables"),
+                )
+                tracker.add_tokens(
+                    usage.get("prompt_tokens", 0),
+                    usage.get("completion_tokens", 0),
+                    usage.get("total_tokens", 0),
+                )
+            except Exception as e:
+                logger.error("性能优化重写调用失败: %s", e)
+                rewritten = None
+        if not rewritten:
+            logger.warning("性能优化重写未返回有效 SQL，放行执行")
+            return {"route": "q_execute", "opt_rounds": opt_round}
+        result.sql = rewritten
+        result.optimization_trail.append(
+            {"round": opt_round, "error": state["error_message"], "sql": rewritten}
+        )
+        _emit("correcting", {"round": opt_round, "kind": "perf",
+                             "error": state["error_message"], "sql": rewritten})
+        _emit("sql", {"sql": rewritten})
+        return {"route": "q_validate", "opt_rounds": opt_round, "fanout_waived": False}
+
+    def _r_opt_correct(self, state: NL2SQLState) -> str:
         return state["route"]
 
     def _n_q_execute(self, state: NL2SQLState) -> dict:
@@ -551,6 +686,9 @@ class NL2SQLPipeline:
     def _n_d_generate(self, state: NL2SQLState) -> dict:
         result, tracker = state["result"], state["tracker"]
         with tracker.step("SQL生成"):
+            # 【预埋-当前不生效】DML 仅生成展示、从不执行，故不经能力 Gate。
+            # 未来若开放写执行：写类 Tool 必须注册为 medium/high 风险（R100 自动拒绝），
+            # 且 Gate 不健康（fail-closed）时在此直接终止 DML，降级为只读模式。
             try:
                 gen = self.generator.generate(
                     state["question"], extra_context=state["extra_context"],

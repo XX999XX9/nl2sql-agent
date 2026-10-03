@@ -1,0 +1,51 @@
+# Skill/Tool 统一准入策略（声明式，改策略无需发版）
+# 评估顺序：priority 升序，首条命中即裁决；全部不命中 → 引擎默认拒绝。
+# 显式 deny 规则 priority 必须小于 allow 规则。
+version: 1
+meta:
+  fail_closed: true          # 本文件加载失败/Gate 故障：一律拒绝并降级只读
+  default_action: deny
+forward_only_keys:           # 【预埋-暂不生效】等账户/权限体系落地后启用
+  - required_permission
+  - tables_in_scope
+
+rules:
+  - id: R100-MEDIUM-DENY
+    description: >-
+      【当前不会命中：现网 Skill/Tool 全部 risk=low】中高风险能力一律拒绝；
+      未来注册写操作/高危工具（如执行 DDL、导出全表）时此规则自动生效。
+    priority: 10
+    action: deny
+    when:
+      kind: "*"
+      risk_gte: medium
+    reason: 中/高风险能力在当前只读主体下未获授权
+    correction_hint: >-
+      请改用低风险的只读 Skill/Tool；若确有需要，请拆分问题为可只读完成的部分，
+      或联系管理员为当前账户申请对应权限（账户体系接入后生效）。
+
+  - id: R010-GET-SCHEMA
+    description: 允许查询生成阶段按需获取真实表结构（只读、低风险）
+    priority: 50
+    action: allow
+    when:
+      kind: tool
+      name: get_table_schema
+      risk_lte: low
+      phase_in: [generate]
+      roles_any: [readonly]
+    reason: 只读元数据查询，参数为表名列表，由表结构管理器提供
+    # 【预埋】tables_in_scope: true —— 接入库表级授权后，仅允许申请主体可见的表
+
+  - id: R001-LOW-RISK-SKILLS
+    description: 允许查询生成阶段调用全部低风险 SQL 写作技能
+    priority: 100
+    action: allow
+    when:
+      kind: skill
+      risk_lte: low
+      phase_in: [generate]
+      roles_any: [readonly]
+    reason: 低风险只读写作指引技能
+    # 【预埋】required_permission: nl2sql.generate —— 接入权限码后改为显式校验
+

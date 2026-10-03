@@ -13,3 +13,12 @@ fanout:
   # JOIN 扇出检测模式：off 关闭 / static 仅 AST 风险提示（零数据库开销）/
   # dynamic AST 命中后再执行 COUNT(*) vs COUNT(DISTINCT 主键) 计数确认
   mode: static
+
+explain:
+  large_table_rows: 10000   # EXPLAIN 估算扫描行数达到该值才视为大表（type=ALL 且 key=NULL 时拦截）
+  max_opt_rounds: 2        # 性能优化独立计数上限（不计入语义纠错）；第 3 次检测仍不通过也放行执行
+
+# Skill/Tool 能力层（统一 Gate 准入）
+capabilities:
+  max_cap_rounds: 2          # 单次生成内模型最多的能力申请轮次（防死循环，超限强制直接出 SQL）
+  # rules_path / audit_path 使用默认：config/gate_rules.yml、logs/gate_audit.jsonl

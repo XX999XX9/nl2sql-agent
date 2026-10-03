@@ -32,6 +32,7 @@ class SQLExecutor:
 
     def __init__(self):
         cfg = load_yaml(BACKEND_ROOT / "config" / "database.yml")["database"]
+        self._db_name = cfg["name"]
         self._row_limit = int(cfg.get("result_row_limit", 1000))
         self._execution_timeout = int(cfg.get("execution_timeout", 30))
         self._engine = create_engine(
@@ -107,6 +108,31 @@ class SQLExecutor:
         if code == 3024 or "max_execution_time" in msg.lower() or "timeout" in msg.lower():
             return SQLExecutionError(msg, kind="timeout")
         return SQLExecutionError(msg, kind="other")
+
+    def explain(self, sql: str) -> List[dict]:
+        """执行 EXPLAIN（不实际运行 SQL），返回每个计划行的 dict（列名→值）"""
+        with self._engine.connect() as conn:
+            result = conn.execute(text(f"EXPLAIN {sql}"))
+            columns = list(result.keys())
+            return [dict(zip(columns, self._normalize_row(row))) for row in result.fetchall()]
+
+    def table_indexes(self, table: str) -> List[dict]:
+        """表上的真实索引（information_schema.STATISTICS）：
+        [{index_name, column, non_unique, seq}]，按索引名/序号排序"""
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT INDEX_NAME, COLUMN_NAME, NON_UNIQUE, SEQ_IN_INDEX "
+                    "FROM information_schema.STATISTICS "
+                    "WHERE TABLE_SCHEMA = :db AND TABLE_NAME = :tbl "
+                    "ORDER BY INDEX_NAME, SEQ_IN_INDEX"
+                ),
+                {"db": self._db_name, "tbl": table},
+            ).fetchall()
+        return [
+            {"index_name": r[0], "column": r[1], "non_unique": int(r[2]), "seq": int(r[3])}
+            for r in rows
+        ]
 
     def dispose(self):
         self._engine.dispose()

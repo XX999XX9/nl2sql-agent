@@ -44,43 +44,84 @@ class SQLGenerator:
     def generate(self, question: str, extra_context: str = "", mode: str = "query",
                  tables: Optional[List[str]] = None,
                  conversation_context: str = "",
-                 reference_context: str = "") -> GenerationResult:
+                 reference_context: str = "",
+                 selected_schema: str = "",
+                 capability_catalog: str = "") -> GenerationResult:
         """组装 Prompt 调用 LLM 并提取 SQL；
         query 模式：多轮上下文经 {conversation_context} 紧跟用户问题，
         术语映射/值链接经 {reference_context} 置于表结构之后（模板内固定位置）；
         extra_context 仅 dml 模式使用（前置拼接，dml 模板无对应占位符）；
         mode=query 生成 SELECT，mode=dml 生成增删改语句（仅展示不执行）；
-        tables 为 Schema 检索命中的表集合（None=全量 Schema 注入）"""
+        tables 为 Schema 检索命中的表集合（None=全量 Schema 注入）；
+        selected_schema 为第一阶段「表字段识别」裁剪后的上下文（query 模式），
+        非空时替代原始 Schema 注入生成模板"""
+
+    # -----------------------------------------------------------
+    def build_query_messages(self, question: str, tables: Optional[List[str]] = None,
+                             conversation_context: str = "",
+                             reference_context: str = "",
+                             selected_schema: str = "",
+                             capability_catalog: str = "",
+                             schema_context_override: Optional[str] = None) -> List[dict]:
+        """组装 query 模式的初始消息（能力编排器复用此入口，保证单一生成模板）"""
+        if schema_context_override is not None:
+            schema_context = schema_context_override
+        elif selected_schema:
+            schema_context = selected_schema
+        else:
+            schema_context = (
+                self.schema_manager.schema_context
+                if tables is None
+                else self.schema_manager.build_context_for_tables(tables)
+            )
+        relation_context = (
+            self.relation_graph.build_context_for_tables(tables)
+            if self.relation_graph else ""
+        )
+        user_prompt = self._template.format(
+            schema_context=schema_context,
+            relation_context=relation_context,
+            question=question,
+            conversation_context=conversation_context,
+            reference_context=reference_context,
+            capability_catalog=capability_catalog,
+        )
+        return [
+            {"role": "system", "content": self._system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
+    @property
+    def system_prompt(self) -> str:
+        return self._system_prompt
+
+    def extract_sql(self, text: str) -> str:
+        return self._extract_sql(text)
         schema_context = (
             self.schema_manager.schema_context
             if tables is None
             else self.schema_manager.build_context_for_tables(tables)
         )
+        if mode == "query" and selected_schema:
+            schema_context = selected_schema
         if mode == "dml":
             template = self._dml_template
             user_prompt = template.format(schema_context=schema_context, question=question)
             if extra_context:
                 user_prompt = f"{extra_context}\n\n{user_prompt}"
         else:
-            template = self._template
-            relation_context = (
-                self.relation_graph.build_context_for_tables(tables)
-                if self.relation_graph else ""
-            )
-            user_prompt = template.format(
-                schema_context=schema_context,
-                relation_context=relation_context,
-                question=question,
+            messages = self.build_query_messages(
+                question=question, tables=tables,
                 conversation_context=conversation_context,
                 reference_context=reference_context,
+                selected_schema=selected_schema,
+                capability_catalog=capability_catalog,
+                schema_context_override=schema_context,
             )
 
-        result = self.llm.chat([
-            {"role": "system", "content": self._system_prompt},
-            {"role": "user", "content": user_prompt},
-        ])
+        result = self.llm.chat(messages)
 
-        sql = self._extract_sql(result.content)
+        sql = self.extract_sql(result.content)
         if not sql:
             logger.warning("未能从模型输出中提取 SQL，原始输出: %s", result.content[:200])
         return GenerationResult(

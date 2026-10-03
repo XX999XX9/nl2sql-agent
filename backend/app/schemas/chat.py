@@ -61,6 +61,8 @@ class ChatResponse(BaseModel):
     term_mappings: List[dict] = []
     value_mappings: List[dict] = []
     correction_trail: List[dict] = []   # 纠错轨迹：每轮 {round, error, sql}
+    optimization_trail: List[dict] = []  # EXPLAIN 性能优化轨迹（独立于语义纠错）
+    capability_trail: List[dict] = []    # Skill/Tool 申请审核轨迹（每轮请求/批准/拒绝）
     usage: dict = {}
     error: Optional[str] = None
     error_kind: Optional[str] = None

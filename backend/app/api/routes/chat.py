@@ -52,6 +52,8 @@ def chat(
         term_mappings=result.term_mappings,
         value_mappings=result.value_mappings,
         correction_trail=result.correction_trail,
+        optimization_trail=result.optimization_trail,
+        capability_trail=result.capability_trail,
         usage=result.usage,
         error=result.error,
         error_kind=result.error_kind,

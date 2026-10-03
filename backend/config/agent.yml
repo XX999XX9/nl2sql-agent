@@ -27,3 +27,4 @@ features:
   relation_graph: true               # 表关联关系图谱（显式外键+命名推断+采样验证，注入 Prompt 关联键）
   join_static_check: true            # 无 ON 笛卡尔积 AST 拦截 + JOIN 关联键告警
   fanout_check: true                # JOIN 扇出（一对多放大聚合）检测
+  explain_gate: true               # EXPLAIN 性能门禁（大表全表扫描无索引拦截+独立优化轮次）

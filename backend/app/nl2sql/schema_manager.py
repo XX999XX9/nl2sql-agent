@@ -147,6 +147,10 @@ class SchemaManager:
     def get_table_names(self) -> List[str]:
         return list(self._tables.keys())
 
+    def get_table_comment(self, table_name: str) -> str:
+        # 表级注释（来自数据库 TABLE_COMMENT，不允许模型自行发挥）
+        return self._table_comments.get(table_name, "")
+
     def get_table(self, table_name: str) -> List[dict]:
         return self._tables.get(table_name, [])
 

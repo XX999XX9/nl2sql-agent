@@ -23,7 +23,11 @@ class LLMResult:
     completion_tokens: int = 0
     total_tokens: int = 0
     model: str = ""
-    finish_reason: str = ""                   # stop/length/content_filter…（空 content 诊断用）
+    finish_reason: str = ""                   # stop/length/tool_calls/content_filter…
+    tool_calls: list = field(default_factory=list)
+    # 原生 function calling：OpenAI 结构
+    # [{"id":"call_xxx","type":"function","function":{"name":"...","arguments":"{...}"}}]，
+    # 可直接作为 assistant 消息的 tool_calls 回拼
 
     @property
     def usage(self) -> dict:
@@ -44,38 +48,61 @@ class LLMClient:
         self.max_tokens = max_tokens
         self.client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout)
 
-    def chat(self, messages: List[dict], temperature: Optional[float] = None) -> LLMResult:
-        """同步调用；messages 为 OpenAI 格式 [{role, content}]。
+    def chat(self, messages: List[dict], temperature: Optional[float] = None,
+             tools: Optional[list] = None, tool_choice=None) -> LLMResult:
+        """同步调用；messages 为 OpenAI 格式 [{role, content(, tool_calls)}]。
+        tools/tool_choice 为 OpenAI 原生 function calling 参数（None=不启用）。
         推理模型思考过长会耗尽 max_tokens 导致正文为空（finish_reason=length），
-        此时按 4×/16× 两级扩容重试"""
-        result = self._to_result(self._create(messages, temperature, self.max_tokens))
+        此时按 4×/16× 两级扩容重试；tool_calls 响应 content 本就为空，不触发扩容"""
+        result = self._to_result(
+            self._create(messages, temperature, self.max_tokens, tools, tool_choice))
         for scale in (4, 16):
-            if result.content:
+            if result.content or result.tool_calls:
                 return result
             logger.warning(
                 "LLM 返回空正文（finish_reason=%s, reasoning=%d字, completion_tokens=%d），%d× 扩容重试",
                 result.finish_reason, len(result.reasoning), result.completion_tokens, scale,
             )
-            result = self._to_result(self._create(messages, temperature, self.max_tokens * scale))
+            result = self._to_result(
+                self._create(messages, temperature, self.max_tokens * scale, tools, tool_choice))
         if not result.content:
             logger.error("扩容重试后仍为空正文（finish_reason=%s）", result.finish_reason)
         return result
 
-    def _create(self, messages: List[dict], temperature: Optional[float], max_tokens: int):
-        return self.client.chat.completions.create(
+    def _create(self, messages: List[dict], temperature: Optional[float], max_tokens: int,
+                tools: Optional[list] = None, tool_choice=None):
+        kwargs = dict(
             model=self.model,
             messages=messages,
             temperature=self.temperature if temperature is None else temperature,
             max_tokens=max_tokens,
         )
+        if tools:                      # 仅在提供工具时携带，保持普通调用与此前完全一致
+            kwargs["tools"] = tools
+        if tool_choice is not None:
+            kwargs["tool_choice"] = tool_choice
+        return self.client.chat.completions.create(**kwargs)
 
     def _to_result(self, resp) -> LLMResult:
         msg = resp.choices[0].message if resp.choices else None
         usage = resp.usage
         finish = resp.choices[0].finish_reason if resp.choices else ""
+        tool_calls = []
+        if msg is not None and getattr(msg, "tool_calls", None):
+            for tc in msg.tool_calls:
+                fn = getattr(tc, "function", None)
+                tool_calls.append({
+                    "id": getattr(tc, "id", ""),
+                    "type": getattr(tc, "type", "function"),
+                    "function": {
+                        "name": getattr(fn, "name", ""),
+                        "arguments": getattr(fn, "arguments", "") or "",
+                    },
+                })
         return LLMResult(
             content=(msg.content or "") if msg else "",
             reasoning=getattr(msg, "reasoning_content", None) or "" if msg else "",
+            tool_calls=tool_calls,
             prompt_tokens=getattr(usage, "prompt_tokens", 0) if usage else 0,
             completion_tokens=getattr(usage, "completion_tokens", 0) if usage else 0,
             total_tokens=getattr(usage, "total_tokens", 0) if usage else 0,
