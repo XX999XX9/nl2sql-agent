@@ -24,15 +24,20 @@ RULE_DEFAULT_DENY = "R403-DEFAULT"      # 无规则命中
 RULE_GATE_DOWN = "R503-FAILCLOSED"      # Gate/规则不可用
 RULE_LOOP = "R429-LOOP-GUARD"           # 重复请求被拦截
 RULE_GATE_ERROR = "R500-GATE-ERROR"     # 评估过程异常
+RULE_APPROVAL_DISABLED = "R403-APPROVAL-OFF"  # 命中审批规则但审批功能未上线
 
 
 class SkillToolGate:
     def __init__(self, registry: CapabilityRegistry, engine: Optional[RuleEngine],
-                 audit: AuditLogger, healthy: bool = True):
+                 audit: AuditLogger, healthy: bool = True,
+                 approval_enabled: bool = False):
         self.registry = registry
         self.engine = engine
         self.audit = audit
         self.healthy = healthy and engine is not None
+        # 【人工审批-预埋，当前恒 False】True 时 ask 规则裁决为挂起等待审批；
+        # False（默认）时 ask 一律按拒绝处理（fail-closed），与现有 bypass/FC 协议不冲突。
+        self.approval_enabled = approval_enabled
 
     # ------------------------------------------------------------ 批量决策
     def decide_batch(self, requests: List[CapabilityRequest],
@@ -84,6 +89,24 @@ class SkillToolGate:
                                f"{rule.reason}（匹配条件：{detail}）",
                                rule.correction_hint or "请改用其他允许的能力或直接生成 SQL")
                 denied_keys.add(sig)
+                return d
+            if rule.action == "ask":
+                # 人工审批裁决点：功能上线后这里返回 action="ask"，由编排层挂起申请、
+                # 等待用户经 /approval 接口给出结论（ApprovalStore 已在 approval.py 预埋）。
+                # 当前审批未启用：fail-closed 按拒绝处理，绝不在无人确认时放行高危能力。
+                if not self.approval_enabled:
+                    d = self._deny(
+                        req, ctx, RULE_APPROVAL_DISABLED,
+                        f"{rule.reason}（匹配条件：{detail}）；人工审批功能当前未开放，"
+                        f"命中规则 {rule.id} 的申请一律拒绝",
+                        rule.correction_hint or "请改用低风险只读能力或直接生成 SQL")
+                    denied_keys.add(sig)
+                    return d
+                d = Decision(request=req, action="ask", rule_id=rule.id,
+                             reason=f"{rule.reason}（匹配条件：{detail}）",
+                             correction_hint=rule.correction_hint,
+                             context_snapshot=ctx.snapshot())
+                self._audit(d, ctx)
                 return d
             return self._allow(req, ctx, rule.id, f"{rule.reason}（{detail}）")
         except Exception as e:  # 2.1.3 Gate 自身故障 → fail-closed

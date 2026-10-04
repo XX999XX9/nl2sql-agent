@@ -45,6 +45,7 @@ body {
 
 .chat-input-bar {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   padding: 10px 16px;
   border-top: 1px solid #e5e7eb;

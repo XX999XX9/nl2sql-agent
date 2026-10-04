@@ -22,7 +22,11 @@ def chat(
     pipeline: NL2SQLPipeline = Depends(get_pipeline),
 ):
     """非流式：意图分流 → 查询执行/仅生成SQL/元信息回答（与 SSE 同一 pipeline）"""
-    result = pipeline.run(body.message, session_id=body.session_id)
+    result = pipeline.run(
+        body.message, session_id=body.session_id,
+        reference_turn_id=body.reference_turn_id,
+        clarify_id=body.clarify_id,
+    )
     code = ErrorCode.OK if result.error is None else ErrorCode.INTERNAL_ERROR
     if result.error_kind == "guard":
         code = ErrorCode.SQL_DENIED
@@ -49,6 +53,11 @@ def chat(
         raw_output=result.raw_output,
         answer=result.answer,
         explanation=result.explanation,
+        sql_label=result.sql_label,
+        need_clarification=result.need_clarification,
+        clarify_id=result.clarify_id,
+        clarification_questions=result.clarification_questions,
+        reference_turn_id=result.reference_turn_id,
         term_mappings=result.term_mappings,
         value_mappings=result.value_mappings,
         correction_trail=result.correction_trail,
@@ -69,7 +78,11 @@ def chat_stream(
 
     def event_stream():
         try:
-            for event in pipeline.iter_run(body.message, session_id=body.session_id):
+            for event in pipeline.iter_run(
+                body.message, session_id=body.session_id,
+                reference_turn_id=body.reference_turn_id,
+                clarify_id=body.clarify_id,
+            ):
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
         except Exception as e:  # 流中途异常兜底：保证前端一定收到终止事件
             yield f"data: {json.dumps({'type': 'error', 'data': {'message': f'内部错误：{e}', 'kind': 'internal'}}, ensure_ascii=False)}\n\n"

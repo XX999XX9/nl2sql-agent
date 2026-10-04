@@ -47,7 +47,10 @@ def build_capability_layer(generator, schema_manager, nl2sql_cfg: dict) -> Capab
         # 系统侧校验管道不变）；决策层 R503 fail-closed 作为预埋防线保留。
         logger.error("Gate 规则加载失败，能力层将被 bypass（模型自行发挥，DQL 正常）: %s", e)
 
-    gate = SkillToolGate(registry, engine, audit, healthy=engine is not None)
+    # 人工审批开关（预埋，当前配置恒为 false；未配置时按 false 处理）
+    approval_enabled = bool((engine.meta if engine else {}).get("approval_enabled", False))
+    gate = SkillToolGate(registry, engine, audit, healthy=engine is not None,
+                         approval_enabled=approval_enabled)
     orchestrator = CapabilityOrchestrator(
         generator, gate, registry,
         max_cap_rounds=int(cap_cfg.get("max_cap_rounds", 2)),

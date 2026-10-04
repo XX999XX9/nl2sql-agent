@@ -5,7 +5,9 @@ llm:
   provider: openai_compatible          # 百炼 DashScope OpenAI兼容模式
   api_key: ${BAILIAN_API_KEY}
   base_url: ${BAILIAN_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
-  model: ${BAILIAN_MODEL:-qwen-plus}
+  model: ${BAILIAN_MODEL}              # 主模型，只从 .env/环境变量读取（未配置则启动报错，不静默替换）
+  fallback_model: ${BAILIAN_FALLBACK_MODEL:-qwen-plus}
+                                       # 降级模型：仅在主模型调用失败/扩容后仍空响应时自动重试一次
   temperature: 0.0
   max_tokens: 8192
   timeout: 60                          # 单次调用超时（秒）
@@ -28,3 +30,5 @@ features:
   join_static_check: true            # 无 ON 笛卡尔积 AST 拦截 + JOIN 关联键告警
   fanout_check: true                # JOIN 扇出（一对多放大聚合）检测
   explain_gate: true               # EXPLAIN 性能门禁（大表全表扫描无索引拦截+独立优化轮次）
+  sql_explainer: true             # SQL 业务解读 + 符合/风险裁判标签（环境变量 NL2SQL_SQL_EXPLAINER 可覆盖；评测脚本默认关）
+  clarification: true             # 表筛选阶段人工澄清反问（环境变量 NL2SQL_CLARIFICATION 可覆盖；评测脚本默认关，关闭后回退全量继续不挂起）

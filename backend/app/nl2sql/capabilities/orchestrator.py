@@ -66,17 +66,25 @@ class CapabilityOrchestrator:
         self.catalog_text = render_catalog(registry)
 
     # ------------------------------------------------------------ tools 定义
-    def build_openai_tools(self) -> List[dict]:
+    def build_openai_tools(self, skill_policy: str = "mandatory") -> List[dict]:
         """从注册表动态生成 OpenAI tools 数组（注册表是工具定义的唯一来源）：
-        apply_skill 为技能统一申请入口；其余每个注册 tool 一个 function。"""
+        apply_skill 为技能统一申请入口；其余每个注册 tool 一个 function。
+        skill_policy=mandatory：生成阶段强制申请口径；
+        skill_policy=optional：纠错阶段“能直接修正就不申请”的可选口径。"""
+        skill_desc = (
+            "申请获取某个 SQL 写作技能的详细指引。生成 SQL 前，只要目标语句涉及该技能"
+            "覆盖的场景就必须先调用本函数获取指引，再输出 SQL；可在同一条回复中并行调用"
+            "多个技能。严禁在未获取相关技能指引的情况下直接生成涉及该场景的 SQL。"
+            if skill_policy == "mandatory" else
+            "申请获取某个 SQL 写作技能的详细指引（可选）：当你无法仅凭错误信息直接定位"
+            "修正方式、怀疑问题出在 JOIN/GROUP BY 聚合/TopN/差集/日期处理等某个技能覆盖的"
+            "环节时再调用；能直接修正时不要调用。"
+        )
         tools: List[dict] = [{
             "type": "function",
             "function": {
                 "name": SKILL_DISPATCH_TOOL,
-                "description": (
-                    "申请获取某个 SQL 写作技能的详细指引。生成 SQL 前，只要目标语句涉及该技能"
-                    "覆盖的场景就必须先调用本函数获取指引，再输出 SQL；可在同一条回复中并行调用"
-                    "多个技能。严禁在未获取相关技能指引的情况下直接生成涉及该场景的 SQL。"),
+                "description": skill_desc,
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -108,34 +116,13 @@ class CapabilityOrchestrator:
             candidate_tables: Optional[List[str]] = None,
             attempt: int = 0, opt_rounds: int = 0,
             principal: Optional[Principal] = None) -> dict:
+        """query 主链生成入口：强制能力口径（涉及 JOIN/聚合等场景必须先申请技能）"""
         ctx = ExecutionContext(
             phase="generate", question=question, intent="query",
             candidate_tables=candidate_tables, attempt=attempt,
             opt_rounds=opt_rounds, principal=principal or Principal(),
             extra={"known_tables": list(candidate_tables or [])},
         )
-        # Gate 不可用（规则文件缺失/损坏）时的策略：bypass 能力协议，让模型自行发挥，
-        # 走与普通生成完全相同的后续流程（静态校验/SQL Guard/扇出/EXPLAIN 门禁/执行均不变），
-        # DQL 照常执行。依据：当前已注册的 Skill/Tool 全部为只读低风险能力。
-        # 【预埋-未来必须恢复 fail-closed】一旦注册写操作或 medium/high 风险能力，
-        # 本 bypass 分支必须删除/改为按风险拒绝。
-        if not self.gate.healthy:
-            logger.warning("Gate 不可用，bypass 能力协议：模型自行发挥，DQL 正常执行（系统侧校验管道不变）")
-            self.gate.audit.record({
-                "action": "bypass", "rule_id": "R503-BYPASS",
-                "kind": "-", "name": "-", "phase": "generate",
-                "reason": "Gate 不可用；当前能力均为只读低风险，bypass 让模型自行发挥",
-                "context": ctx.snapshot(),
-            })
-            gen = self.generator.generate(
-                question=question, tables=tables,
-                conversation_context=conversation_context,
-                reference_context=reference_context,
-                selected_schema=selected_schema,
-                capability_catalog="",
-            )
-            return {"result": gen, "trace": [], "bypass": "gate_unhealthy"}
-
         messages = self.generator.build_query_messages(
             question=question, tables=tables,
             conversation_context=conversation_context,
@@ -143,7 +130,51 @@ class CapabilityOrchestrator:
             selected_schema=selected_schema,
             capability_catalog=self.catalog_text,
         )
-        tools_spec = self.build_openai_tools()
+
+        def fallback():
+            return self.generator.generate(
+                question=question, tables=tables,
+                conversation_context=conversation_context,
+                reference_context=reference_context,
+                selected_schema=selected_schema,
+                capability_catalog="",
+            )
+
+        return self.run_messages(
+            messages, ctx=ctx, fallback=fallback,
+            extract_sql=self.generator.extract_sql, skill_policy="mandatory")
+
+    def run_messages(self, messages: List[dict], *, ctx: ExecutionContext,
+                     fallback, extract_sql, skill_policy: str = "mandatory") -> dict:
+        """通用原生 function-calling 循环（生成/纠错共用同一套 Gate 裁决与回喂协议）。
+
+        - messages：首轮消息（调用方按各自模板组装；能力清单区块由模板侧决定有无）；
+        - fallback：Gate 不健康（bypass）或编排异常（如模型端不支持 tools）时的
+          无工具一次性回退，必须返回 GenerationResult；
+        - extract_sql：从最终文本提取 SQL 的函数（生成/纠错的代码块口径不同）；
+        - skill_policy：mandatory=apply_skill 描述为强制申请（生成阶段）；
+          optional=仅在无法自行完成时按需申请（纠错阶段）。
+        返回 {result: GenerationResult, trace: [CapabilityTrace], bypass: str}。
+        """
+        # Gate 不可用（规则文件缺失/损坏）时的策略：bypass 能力协议，走与普通调用
+        # 完全相同的后续流程（静态校验/SQL Guard/扇出/EXPLAIN 门禁/执行均不变）。
+        # 依据：当前已注册的 Skill/Tool 全部为只读低风险能力。
+        # 【预埋-未来必须恢复 fail-closed】一旦注册写操作或 medium/high 风险能力，
+        # 本 bypass 分支必须删除/改为按风险拒绝（Gate 决策层 R503 预埋防线保留）。
+        if not self.gate.healthy:
+            logger.warning(
+                "Gate 不可用，bypass 能力协议（phase=%s）：模型自行发挥，系统侧校验管道不变",
+                ctx.phase)
+            self.gate.audit.record({
+                "action": "bypass", "rule_id": "R503-BYPASS",
+                "kind": "-", "name": "-", "phase": ctx.phase,
+                "reason": "Gate 不可用；当前能力均为只读低风险，bypass 让模型自行发挥",
+                "context": ctx.snapshot(),
+            })
+            gen = fallback()
+            return {"result": gen, "trace": [], "bypass": "gate_unhealthy"}
+
+        tools_spec = self.build_openai_tools(skill_policy=skill_policy)
         trace: List[CapabilityTrace] = []
         merged = None
         try:
@@ -158,7 +189,7 @@ class CapabilityOrchestrator:
                     if resp.tool_calls and force_final:
                         logger.warning("能力调用轮次已耗尽（%d），忽略 tool_calls，直接按文本输出提取 SQL",
                                        self.max_cap_rounds)
-                    result = self._to_result(merged, self.generator.extract_sql(resp.content or ""))
+                    result = self._to_result(merged, extract_sql(resp.content or ""))
                     return {"result": result, "trace": trace, "bypass": ""}
 
                 tr = CapabilityTrace(round_index=round_index)
@@ -173,20 +204,15 @@ class CapabilityOrchestrator:
                     messages.append({"role": "tool", "tool_call_id": tool_call_id, "content": content})
                 trace.append(tr)
 
-            result = self._to_result(merged, self.generator.extract_sql(
+            result = self._to_result(merged, extract_sql(
                 merged.content if merged else ""))
             return {"result": result, "trace": trace, "bypass": ""}
         except Exception as e:
-            logger.warning("能力编排异常（含模型端不支持 tools 的可能），回退一次性普通生成: %s",
-                           str(e).splitlines()[0])
-            result = self.generator.generate(
-                question=question, tables=tables,
-                conversation_context=conversation_context,
-                reference_context=reference_context,
-                selected_schema=selected_schema,
-                capability_catalog="",
-            )
-            return {"result": result, "trace": trace, "bypass": "orchestrator_error"}
+            logger.warning(
+                "能力编排异常（phase=%s，含模型端不支持 tools 的可能），回退一次性无工具调用: %s",
+                ctx.phase, str(e).splitlines()[0])
+            gen = fallback()
+            return {"result": gen, "trace": trace, "bypass": "orchestrator_error"}
 
     # ------------------------------------------------------------ 逐个服务 tool_call
     def _serve_tool_calls(self, tool_calls: List[dict], ctx: ExecutionContext,
@@ -231,7 +257,14 @@ class CapabilityOrchestrator:
             if not d.allowed:
                 tr.denied.append({"kind": req.kind, "name": req.name,
                                   "rule_id": d.rule_id, "reason": d.reason})
-                text = (f"【申请被拒绝：{req.kind} {req.name}｜规则 {d.rule_id}】\n原因：{d.reason}\n"
+                if d.action == "ask":
+                    # 【人工审批-预埋】审批上线后：此处应暂停图执行、推送审批事件，
+                    # 用户批准后凭一次性 Grant 放行（见 approval.py ApprovalStore）。
+                    # 当前 Gate 在审批关闭时把 ask 降级为 deny，理论上走不到该分支。
+                    head = f"【申请待人工审批：{req.kind} {req.name}｜规则 {d.rule_id}】（审批未开放，本轮不可用）"
+                else:
+                    head = f"【申请被拒绝：{req.kind} {req.name}｜规则 {d.rule_id}】"
+                text = (f"{head}\n原因：{d.reason}\n"
                         + (f"纠偏指引：{d.correction_hint}\n" if d.correction_hint else "")
                         + "请按指引改用其他方式，禁止重复调用该被拒能力，之后直接输出最终 SQL。")
                 cache[sig] = text

@@ -42,8 +42,10 @@ class LLMClient:
     """OpenAI 兼容 Chat Completions 客户端封装"""
 
     def __init__(self, api_key: str, base_url: str, model: str,
-                 temperature: float = 0.0, max_tokens: int = 2048, timeout: int = 60):
+                 temperature: float = 0.0, max_tokens: int = 2048, timeout: int = 60,
+                 fallback_model: str = ""):
         self.model = model
+        self.fallback_model = fallback_model or ""
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout)
@@ -52,27 +54,47 @@ class LLMClient:
              tools: Optional[list] = None, tool_choice=None) -> LLMResult:
         """同步调用；messages 为 OpenAI 格式 [{role, content(, tool_calls)}]。
         tools/tool_choice 为 OpenAI 原生 function calling 参数（None=不启用）。
-        推理模型思考过长会耗尽 max_tokens 导致正文为空（finish_reason=length），
-        此时按 4×/16× 两级扩容重试；tool_calls 响应 content 本就为空，不触发扩容"""
+        主模型（.env 的 BAILIAN_MODEL）优先；调用抛异常或扩容后仍空响应时，
+        自动用 fallback_model（默认 qwen-plus）整体重试一次，再失败则抛出原异常。"""
+        try:
+            return self._chat_with_model(
+                self.model, messages, temperature, tools, tool_choice)
+        except Exception as primary_err:
+            if self.fallback_model and self.fallback_model != self.model:
+                logger.warning(
+                    "主模型 %s 调用失败（%s），降级到 %s 重试一次",
+                    self.model, str(primary_err).splitlines()[0][:200], self.fallback_model)
+                return self._chat_with_model(
+                    self.fallback_model, messages, temperature, tools, tool_choice,
+                    last_err=primary_err)
+            raise
+
+    def _chat_with_model(self, model: str, messages: List[dict],
+                         temperature: Optional[float], tools: Optional[list],
+                         tool_choice, last_err: Optional[Exception] = None) -> LLMResult:
+        """指定模型的一次完整尝试（含空正文 4×/16× 扩容重试）；
+        扩容后仍为空时，若上层已有主模型异常则抛出，否则抛 RuntimeError 交由 chat() 降级"""
         result = self._to_result(
-            self._create(messages, temperature, self.max_tokens, tools, tool_choice))
+            self._create(model, messages, temperature, self.max_tokens, tools, tool_choice))
         for scale in (4, 16):
             if result.content or result.tool_calls:
                 return result
             logger.warning(
-                "LLM 返回空正文（finish_reason=%s, reasoning=%d字, completion_tokens=%d），%d× 扩容重试",
-                result.finish_reason, len(result.reasoning), result.completion_tokens, scale,
+                "模型 %s 返回空正文（finish_reason=%s, reasoning=%d字, completion_tokens=%d），%d× 扩容重试",
+                model, result.finish_reason, len(result.reasoning), result.completion_tokens, scale,
             )
             result = self._to_result(
-                self._create(messages, temperature, self.max_tokens * scale, tools, tool_choice))
-        if not result.content:
-            logger.error("扩容重试后仍为空正文（finish_reason=%s）", result.finish_reason)
+                self._create(model, messages, temperature, self.max_tokens * scale,
+                             tools, tool_choice))
+        if not result.content and not result.tool_calls:
+            logger.error("模型 %s 扩容重试后仍为空响应（finish_reason=%s）", model, result.finish_reason)
+            raise RuntimeError(f"模型 {model} 多次扩容后仍返回空响应")
         return result
 
-    def _create(self, messages: List[dict], temperature: Optional[float], max_tokens: int,
-                tools: Optional[list] = None, tool_choice=None):
+    def _create(self, model: str, messages: List[dict], temperature: Optional[float],
+                max_tokens: int, tools: Optional[list] = None, tool_choice=None):
         kwargs = dict(
-            model=self.model,
+            model=model,
             messages=messages,
             temperature=self.temperature if temperature is None else temperature,
             max_tokens=max_tokens,
@@ -139,13 +161,19 @@ class ModelFactory:
 
     def create_llm(self) -> LLMClient:
         cfg = self._config["llm"]
+        model = (cfg.get("model") or "").strip()
+        if not model or "${" in model:
+            # 不静默回退默认模型：主模型必须由 .env/环境变量显式配置
+            raise RuntimeError(
+                "主模型未配置：请在 backend/.env 设置 BAILIAN_MODEL（占位符未被替换）")
         return LLMClient(
             api_key=cfg["api_key"],
             base_url=cfg["base_url"],
-            model=cfg["model"],
+            model=model,
             temperature=cfg.get("temperature", 0.0),
             max_tokens=cfg.get("max_tokens", 4096),
             timeout=cfg.get("timeout", 60),
+            fallback_model=(cfg.get("fallback_model") or "").strip(),
         )
 
     def create_embedding(self) -> EmbeddingClient:

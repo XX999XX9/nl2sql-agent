@@ -9,6 +9,8 @@ from pydantic import BaseModel
 class ChatRequest(BaseModel):
     message: str
     session_id: Optional[str] = None   # 传入则启用多轮上下文；由前端创建会话后携带
+    reference_turn_id: Optional[str] = None  # 显式引用某轮历史回答（替代默认上一轮注入）
+    clarify_id: Optional[str] = None        # 本次 message 是对该澄清请求的回答（恢复暂存）
 
 
 class ChatEvent(BaseModel):
@@ -19,11 +21,12 @@ class ChatEvent(BaseModel):
     - sql          {sql}                       生成的 SQL（守卫改写后）
     - executing    {sql}                       开始执行
     - correcting   {round, error}              自动纠错轮次（纠错阶段接入）
-    - explanation  {text}                      SQL 业务化解释
+    - clarification {clarify_id, questions}   表筛选阶段需用户补充信息（本轮终止，等待带 clarify_id 重发）
+    - explanation  {text, label}               SQL 业务化解释 + 一致性裁判标签 conform/risk/unknown
     - result       {query_id, columns, rows, total, truncated, executed}
     - usage        {elapsed_ms, prompt_tokens, completion_tokens, total_tokens, steps:[{name,elapsed_ms,...}]}
     - error        {message, kind}
-    - done         {}                          本轮流结束
+    - done         {turn_id?, clarify_id?, need_clarification?}  本轮流结束
     """
 
     type: str
@@ -58,6 +61,11 @@ class ChatResponse(BaseModel):
     raw_output: str = ""
     answer: str = ""
     explanation: str = ""
+    sql_label: str = ""               # SQL 与用户问题一致性裁判：conform/risk/unknown；空=未裁判（解读关闭）
+    need_clarification: bool = False    # 表筛选阶段发起人工澄清
+    clarify_id: Optional[str] = None
+    clarification_questions: List[str] = []
+    reference_turn_id: Optional[str] = None
     term_mappings: List[dict] = []
     value_mappings: List[dict] = []
     correction_trail: List[dict] = []   # 纠错轨迹：每轮 {round, error, sql}

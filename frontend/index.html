@@ -17,6 +17,8 @@
       <button id="toggle-sessions" class="icon-btn" title="会话列表">☰</button>
       <h1>智数通 NL2SQL Agent</h1>
       <button id="toggle-dict" class="icon-btn" title="数据字典">📚</button>
+      <a href="/eval_logs.html" class="icon-btn" title="评测日志审查"
+         style="text-decoration:none;display:inline-flex;align-items:center;">📊</a>
     </header>
 
     <div class="app-body">
@@ -40,6 +42,11 @@
     </div>
 
     <footer class="chat-input-bar">
+      <div id="quote-bar" class="quote-bar" hidden>
+        <span class="quote-bar-icon">引用</span>
+        <span class="quote-bar-text"></span>
+        <button type="button" id="quote-cancel" class="quote-bar-cancel" title="取消引用">×</button>
+      </div>
       <input id="chat-input" type="text" placeholder="输入你的问题，例如：查一下今年的销售额" autocomplete="off" />
       <button id="chat-send" class="btn">发送</button>
     </footer>

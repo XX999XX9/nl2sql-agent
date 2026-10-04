@@ -90,7 +90,7 @@ class Decision:
     """一次能力请求的裁决结果（可解释：命中规则/原因/纠偏指引）"""
 
     request: CapabilityRequest
-    action: str                       # "allow" / "deny"
+    action: str                       # "allow" / "deny" / "ask"(人工审批，预埋暂不生效)
     rule_id: str
     reason: str
     correction_hint: str = ""

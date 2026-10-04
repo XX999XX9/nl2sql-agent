@@ -243,3 +243,144 @@
   word-break: break-all;
   margin: 0;
 }
+
+/* ===== 引用条（输入框上方，显式引用某轮历史回答） ===== */
+.quote-bar {
+  flex-basis: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  background: #f5f3ff;
+  border: 1px solid #ddd6fe;
+  border-left: 3px solid #7c3aed;
+  border-radius: 6px;
+  font-size: 12px;
+}
+.quote-bar[hidden] { display: none; }
+.quote-bar-icon {
+  color: #6d28d9;
+  background: #ede9fe;
+  border-radius: 4px;
+  padding: 1px 6px;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.quote-bar-text {
+  flex: 1;
+  color: #4b5563;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.quote-bar-cancel {
+  border: none;
+  background: transparent;
+  color: #6b7280;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.quote-bar-cancel:hover { color: #111827; }
+
+/* 用户气泡内的引用提示 */
+.message .bubble-quote {
+  display: block;
+  margin-bottom: 4px;
+  padding: 2px 6px;
+  border-left: 2px solid #7c3aed;
+  color: #6d28d9;
+  font-size: 12px;
+  opacity: 0.85;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 卡片头「引用」按钮 */
+.quote-btn {
+  border: 1px solid #ddd6fe;
+  background: #f5f3ff;
+  color: #6d28d9;
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.quote-btn:hover { background: #ede9fe; }
+
+/* ===== SQL 一致性裁判标签（实心椭圆，2 字宽） ===== */
+.sql-check-badge {
+  display: inline-block;
+  min-width: 2.2em;
+  text-align: center;
+  border-radius: 999px;
+  padding: 1px 10px;
+  margin-right: 8px;
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.6;
+  vertical-align: 1px;
+}
+.sql-check-badge.conform { background: #16a34a; }
+.sql-check-badge.risk { background: #dc2626; }
+.sql-check-badge.unknown { background: #6b7280; }
+.explain-head {
+  display: flex;
+  align-items: center;
+  margin-bottom: 4px;
+}
+.explain-head .explain-label { margin: 0; }
+
+/* ===== 人工澄清（卡片内联问答） ===== */
+.clarify-section {
+  background: #fffbeb;
+  border-top: 1px solid #fde68a;
+}
+.clarify-label {
+  font-size: 12px;
+  color: #92400e;
+  margin-bottom: 6px;
+}
+.clarify-question {
+  font-size: 13px;
+  color: #1f2937;
+  margin: 2px 0 8px;
+  padding-left: 8px;
+  border-left: 3px solid #f59e0b;
+}
+.clarify-form {
+  display: flex;
+  gap: 8px;
+}
+.clarify-form textarea {
+  flex: 1;
+  min-height: 38px;
+  max-height: 120px;
+  resize: vertical;
+  border: 1px solid #fcd34d;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+  outline: none;
+  font-family: inherit;
+}
+.clarify-form textarea:focus { border-color: #d97706; }
+.clarify-submit {
+  align-self: flex-end;
+  border: none;
+  background: #d97706;
+  color: #fff;
+  border-radius: 6px;
+  padding: 8px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.clarify-submit:hover { background: #b45309; }
+.clarify-done {
+  font-size: 12px;
+  color: #92400e;
+}

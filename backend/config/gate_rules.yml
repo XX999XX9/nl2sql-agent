@@ -5,21 +5,41 @@ version: 1
 meta:
   fail_closed: true          # 本文件加载失败/Gate 故障：一律拒绝并降级只读
   default_action: deny
+  # 【人工审批开关-预埋】false=审批流程未上线：命中 ask 规则时按拒绝处理（fail-closed），
+  # 不会真的挂起等待人工确认；未来上线审批时改 true 并接通 ApprovalStore + /approval 接口即可，
+  # 编排器与规则文件无需重构。当前现网 Skill/Tool 全部 risk=low，R110 不会被命中。
+  approval_enabled: false
 forward_only_keys:           # 【预埋-暂不生效】等账户/权限体系落地后启用
   - required_permission
+
   - tables_in_scope
 
 rules:
+  - id: R110-HIGH-APPROVAL
+    description: >-
+      【预埋-当前不生效】高风险能力（如执行 DDL、导出全表）必须人工审批后才可调用。
+      审批开关 approval_enabled=false 时本规则命中即按拒绝处理；开关打开后裁决为 ask，
+      流水线挂起该申请、等待用户审批结论（ApprovalStore 已预埋，HTTP/前端待上线）。
+    priority: 5
+    action: ask
+    when:
+      kind: "*"
+      risk_gte: high
+    reason: 高风险能力需人工审批
+    correction_hint: >-
+      请改用低风险只读能力拆分完成；若确有需要，请在审批提示中确认后再执行
+      （审批流程上线后生效）。
+
   - id: R100-MEDIUM-DENY
     description: >-
-      【当前不会命中：现网 Skill/Tool 全部 risk=low】中高风险能力一律拒绝；
-      未来注册写操作/高危工具（如执行 DDL、导出全表）时此规则自动生效。
+      【当前不会命中：现网 Skill/Tool 全部 risk=low】中风险能力一律拒绝；
+      未来注册写操作/中危工具（如批量更新预览、受限数据查询）时此规则自动生效。
     priority: 10
     action: deny
     when:
       kind: "*"
       risk_gte: medium
-    reason: 中/高风险能力在当前只读主体下未获授权
+    reason: 中风险能力在当前只读主体下未获授权
     correction_hint: >-
       请改用低风险的只读 Skill/Tool；若确有需要，请拆分问题为可只读完成的部分，
       或联系管理员为当前账户申请对应权限（账户体系接入后生效）。
@@ -32,7 +52,7 @@ rules:
       kind: tool
       name: get_table_schema
       risk_lte: low
-      phase_in: [generate]
+      phase_in: [generate, correct]   # generate=首次生成；correct=纠错/性能优化重写
       roles_any: [readonly]
     reason: 只读元数据查询，参数为表名列表，由表结构管理器提供
     # 【预埋】tables_in_scope: true —— 接入库表级授权后，仅允许申请主体可见的表
@@ -44,8 +64,7 @@ rules:
     when:
       kind: skill
       risk_lte: low
-      phase_in: [generate]
+      phase_in: [generate, correct]   # generate=首次生成；correct=纠错/性能优化重写
       roles_any: [readonly]
     reason: 低风险只读写作指引技能
     # 【预埋】required_permission: nl2sql.generate —— 接入权限码后改为显式校验
-

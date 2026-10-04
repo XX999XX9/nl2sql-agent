@@ -15,7 +15,10 @@
           <button type="button" class="view-tab active" data-view="reply">回复</button>
           <button type="button" class="view-tab" data-view="result" hidden>查询结果</button>
         </div>
-        <span class="intent-tag" hidden></span>
+        <span class="card-header-right" style="display:flex;gap:8px;align-items:center;">
+          <button type="button" class="quote-btn" hidden>引用</button>
+          <span class="intent-tag" hidden></span>
+        </span>
       </div>
       <div class="card-view view-reply">
         <div class="card-section status-section" hidden></div>
@@ -26,6 +29,7 @@
           </button>
           <div class="correction-body"></div>
         </div>
+        <div class="card-section clarify-section" hidden></div>
         <div class="card-section explain-section"></div>
         <div class="card-section empty-section" hidden></div>
         <div class="card-section error-section" hidden></div>
@@ -65,6 +69,54 @@
     // ---------------------------------------------------------------- 对外 API
     const card = {
       el,
+
+      bindQuote(turnId, question) {
+        // 服务端落库后（done 事件）或历史回放时绑定本轮引用句柄
+        const btn = $(".quote-btn");
+        btn.hidden = false;
+        btn.onclick = () => {
+          if (window.chat && window.chat.setReference) {
+            window.chat.setReference({ turn_id: turnId, question });
+          }
+        };
+      },
+
+      setClarification(data) {
+        // data: {clarify_id, questions:[...]} 卡片内联追问，回答后续跑同一会话
+        const sec = $(".clarify-section");
+        sec.hidden = false;
+        const qs = (data.questions || []).map(
+          (q) => `<div class="clarify-question"></div>`).join("");
+        sec.innerHTML = `
+          <div class="clarify-label">模型需要你补充一些信息：</div>
+          <div class="clarify-questions">${qs}</div>
+          <div class="clarify-form">
+            <textarea placeholder="请补充信息，例如：10月1日至10月3日"></textarea>
+            <button type="button" class="clarify-submit">提交补充</button>
+          </div>`;
+        sec.querySelectorAll(".clarify-question").forEach((el, i) => {
+          el.textContent = data.questions[i];
+        });
+        const ta = sec.querySelector("textarea");
+        const btn = sec.querySelector(".clarify-submit");
+        const submit = () => {
+          const text = ta.value.trim();
+          if (!text) { ta.focus(); return; }
+          ta.disabled = true;
+          btn.disabled = true;
+          sec.querySelector(".clarify-form").innerHTML =
+            `<div class="clarify-done">已提交补充：${escapeHtml(text)}</div>`;
+          if (window.chat && window.chat.answerClarification) {
+            window.chat.answerClarification(data.clarify_id, text);
+          }
+        };
+        btn.addEventListener("click", submit);
+        ta.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) submit();
+        });
+        setTimeout(() => ta.focus(), 0);
+        scrollBottom();
+      },
 
       setIntent(intent) {
         const tag = $(".intent-tag");
@@ -109,10 +161,20 @@
         scrollBottom();
       },
 
-      setExplanation(text) {
+      setExplanation(text, label = null) {
         if (!text) return;
         const sec = $(".explain-section");
-        sec.innerHTML = `<div class="explain-label">解读</div><div class="explain-body"></div>`;
+        // 仅 conform/risk/unknown 三态渲染裁判徽章；空/缺省（解读关闭）不显示徽章
+        const badgeMap = { conform: "符合", risk: "风险", unknown: "未知" };
+        const badge = badgeMap[label]
+          ? `<span class="sql-check-badge ${label}">${badgeMap[label]}</span>`
+          : "";
+        sec.innerHTML = `
+          <div class="explain-head">
+            ${badge}
+            <span class="explain-label">解读</span>
+          </div>
+          <div class="explain-body"></div>`;
         const body = sec.querySelector(".explain-body");
         try {
           body.innerHTML = marked.parse(text);
@@ -148,6 +210,11 @@
       },
     };
     return card;
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => (
+      { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
 
   window.ReplyCard = { create };

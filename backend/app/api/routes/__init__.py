@@ -3,7 +3,7 @@
 
 from fastapi import APIRouter
 
-from app.api.routes import chat, result, session, schema_info
+from app.api.routes import chat, eval_logs, result, session, schema_info
 from app.utils.config_handler import load_yaml
 from app.utils.path_tool import BACKEND_ROOT
 
@@ -12,6 +12,7 @@ router.include_router(chat.router, prefix="/chat", tags=["chat"])
 router.include_router(result.router, prefix="/result", tags=["result"])
 router.include_router(session.router, prefix="/session", tags=["session"])
 router.include_router(schema_info.router, prefix="/schema", tags=["schema_info"])
+router.include_router(eval_logs.router, prefix="/eval", tags=["eval_logs"])
 
 _prompt_optimize_enabled = load_yaml(BACKEND_ROOT / "config" / "agent.yml").get(
     "features", {}

@@ -132,12 +132,17 @@ class SelfCorrector:
         risky   告警成立，rewritten_sql 为有效重写时非空（为空说明模型未给出可用改写）；
         unknown 调用异常/输出不可解析/verdict 非法——调用方回退静态纠错旧链路。
         解析失败一律 unknown，绝不默认 safe（漏检）或默认 risky（强制重写）。"""
+        # Schema 只注入本轮涉及表（与 SQL 生成节点口径一致）；tables 为空回退全量
+        schema_context = (
+            self.schema_manager.build_context_for_tables(tables)
+            if tables else self.schema_manager.schema_context
+        )
         relation_context = (
             self.relation_graph.build_context_for_tables(tables)
             if self.relation_graph else ""
         )
         prompt = self._judge_template.format(
-            schema_context=self.schema_manager.schema_context,
+            schema_context=schema_context,
             relation_context=relation_context,
             question=question,
             sql=sql,
@@ -211,6 +216,48 @@ class SelfCorrector:
                         return None
         return None
 
+    def build_rewrite_messages(self, question: str, sql: str, error_message: str,
+                               tables: Optional[List[str]] = None,
+                               capability_catalog: str = "",
+                               extra_context: str = "") -> List[dict]:
+        """组装纠错重写的初始消息（能力编排器复用：纠错模型同样可申请 skill/tool，
+        但模板口径为“可选申请”——能直接纠错就不调用）。"""
+        schema_context = (
+            self.schema_manager.build_context_for_tables(tables)
+            if tables else self.schema_manager.schema_context
+        )
+        relation_context = (
+            self.relation_graph.build_context_for_tables(tables)
+            if self.relation_graph else ""
+        )
+        prompt = self._template.format(
+            schema_context=schema_context,
+            relation_context=relation_context,
+            question=question,
+            sql=sql,
+            error=error_message,
+            capability_catalog=self.build_capability_block(capability_catalog),
+        )
+        if extra_context:
+            prompt = f"{extra_context}\n\n{prompt}"
+        return [{"role": "user", "content": prompt}]
+
+    @staticmethod
+    def build_capability_block(catalog_text: str) -> str:
+        """纠错模板的可选能力区块：无目录（Gate bypass/无能力回退）时返回空串"""
+        if not catalog_text:
+            return ""
+        return (
+            "\n【可申请的能力（可选，不强制使用）】\n"
+            "你应当首先尝试依据错误信息直接完成纠错。仅在以下情况按需调用函数：\n"
+            "- 无法仅凭错误信息直接定位修正方式、怀疑问题出在 JOIN/GROUP BY 聚合、"
+            "TopN、差集、日期处理等环节时，可调用 apply_skill 申请对应技能的详细指引；\n"
+            "- 怀疑错误是因为缺少其他表或表中其他字段时，可调用 get_table_schema "
+            "获取可能需要的表结构后再修正。\n"
+            "能直接修正时不要调用任何函数。可申请清单：\n"
+            f"{catalog_text}\n"
+        )
+
     # ------------------------------------------------------------------
     # 重写：错误信息回喂 LLM
     def rewrite(self, question: str, sql: str, error_message: str,
@@ -221,12 +268,17 @@ class SelfCorrector:
             self.relation_graph.build_context_for_tables(tables)
             if self.relation_graph else ""
         )
+        schema_context = (
+            self.schema_manager.build_context_for_tables(tables)
+            if tables else self.schema_manager.schema_context
+        )
         prompt = self._template.format(
-            schema_context=self.schema_manager.schema_context,
+            schema_context=schema_context,
             relation_context=relation_context,
             question=question,
             sql=sql,
             error=error_message,
+            capability_catalog=self.build_capability_block(""),
         )
         if extra_context:
             prompt = f"{extra_context}\n\n{prompt}"

@@ -22,6 +22,7 @@
 #     self_correction（max_rounds 生效为 0）/ schema_retriever（None 走全量）
 
 import uuid
+import os
 from dataclasses import dataclass, field
 from typing import Iterator, List, Optional, TypedDict
 
@@ -44,9 +45,10 @@ from app.nl2sql.schema_retriever import SchemaRetriever
 from app.nl2sql.self_corrector import SelfCorrector
 from app.nl2sql.sql_executor import SQLExecutor, SQLExecutionError
 from app.nl2sql.sql_explainer import SQLExplainer
-from app.nl2sql.table_selector import TableSelector
+from app.nl2sql.table_selector import ClarificationRequest, TableSelector
 from app.nl2sql.capabilities.layer import build_capability_layer
-from app.nl2sql.sql_generator import SQLGenerator
+from app.nl2sql.capabilities.protocol import ExecutionContext
+from app.nl2sql.sql_generator import GenerationResult, SQLGenerator
 from app.nl2sql.sql_guard import SQLGuard, SQLGuardError
 from app.nl2sql.sql_validator import SQLValidator, SQLValidationError
 from app.nl2sql.term_mapper import TermMapper
@@ -76,6 +78,11 @@ class PipelineResult:
     raw_output: str = ""
     answer: str = ""
     explanation: str = ""
+    sql_label: str = ""                 # 解读节点裁判：conform/risk/unknown；空=未裁判（解读关闭）
+    need_clarification: bool = False    # 表筛选阶段判定需向用户澄清（本轮不出 SQL）
+    clarify_id: Optional[str] = None
+    clarification_questions: List[str] = field(default_factory=list)
+    reference_turn_id: Optional[str] = None   # 本轮显式引用的历史轮（透出供前端展示）
     usage: dict = field(default_factory=dict)
     term_mappings: List[dict] = field(default_factory=list)
     value_mappings: List[dict] = field(default_factory=list)
@@ -83,6 +90,21 @@ class PipelineResult:
     optimization_trail: List[dict] = field(default_factory=list) # EXPLAIN 性能优化轨迹（独立计数）
     capability_trail: List[dict] = field(default_factory=list)   # Skill/Tool 申请轨迹（供调用正确率/误用率评测）
     error: Optional[str] = None
+    # error_kind 错误类型汇总（全链路唯一定义处，新增类型时同步更新这里与 routes/chat.py 的错误码映射）：
+    #   generate           模型生成失败/未产出有效 SQL（query、dml、meta 三类意图的生成节点）
+    #   validation_syntax  静态校验：SQL 语法错误/无法解析/多条语句/非 SELECT 语句（sql_validator）
+    #   validation_join    静态校验：无 ON/USING 的笛卡尔积 JOIN（sql_validator）
+    #   validation_table   静态校验：引用了不存在的表（sql_validator）
+    #   validation_column  静态校验：引用了不存在的字段（sql_validator）
+    #   guard              安全守卫拦截（sql_guard，如写操作/危险函数）
+    #   syntax             数据库执行报错：SQL 语法/执行计划层面被 MySQL 拒绝（sql_executor）
+    #   permission         数据库执行报错：账号无权限（sql_executor）
+    #   timeout            数据库执行超时（sql_executor）
+    #   other              数据库执行报错：其他未归类异常（sql_executor）
+    #   correction         达到纠错轮次上限后仍失败（pipeline 终态节点）
+    # 评测脚本 run_eval.py 另有“题目级状态”：pass/fail（执行结果与 gold 不一致）/
+    # crash（pipeline 内部抛异常，本题未跑完）/gold_error（标准答案不可执行，剔除分母）/
+    # pipeline_error（整库流水线构建失败）——那是评测口径，不属于本字段。
     error_kind: Optional[str] = None
     session_id: Optional[str] = None
 
@@ -101,10 +123,13 @@ class NL2SQLState(TypedDict, total=False):
     conversation_context: str     # 多轮上下文（模板中紧跟用户问题）
     reference_context: str        # 术语映射/值链接（模板中置于表结构之后）
     candidate_tables: Optional[List[str]]   # Schema 检索命中的候选表
+    reference_turn_id: Optional[str]        # 显式引用的历史轮 ID（None=默认带上一轮）
+    clarify_id: Optional[str]               # 本轮是对某条澄清的回答（恢复暂存后已置空）
     selected_schema: str          # 第一阶段表字段识别裁剪后的 Schema 文本（空=回退全量）
     table_selection: dict         # 表字段识别结构化结果（日志/观测用）
     fanout_waived: bool         # 当前 SQL 已经 LLM 裁决为扇出误报，跳过扇出检测；
                                 # 任何纠错重写产生新 SQL 后必须清除（在 q_correct 节点）
+    opt_rounds: int             # 性能优化（EXPLAIN 门禁）独立轮次：0=未优化，最多 max_opt_rounds
     route: str                    # 当前节点决定的下一跳（条件边消费）
 
 
@@ -156,15 +181,37 @@ class NL2SQLPipeline:
             if features.get("fanout_check", True) else FanoutChecker(None, self.executor, mode="off")
         )
         explain_cfg = nl2sql_cfg.get("explain", {})
+        # 环境变量 NL2SQL_EXPLAIN_GATE 可覆盖 features.explain_gate（评测库索引未经
+        # 生产级维护时用 off 关闭：无索引可利用时优化重写无收益且可能改坏语义）
+        env_gate = os.environ.get("NL2SQL_EXPLAIN_GATE")
+        gate_enabled = (
+            env_gate.strip().lower() in ("1", "on", "true", "yes")
+            if env_gate is not None else features.get("explain_gate", True)
+        )
         self.explain_gate = ExplainGate(
             self.executor,
             large_table_rows=int(explain_cfg.get("large_table_rows", 10000)),
             max_opt_rounds=int(explain_cfg.get("max_opt_rounds", 2)),
-            enabled=features.get("explain_gate", True),
+            enabled=gate_enabled,
         )
         # Skill/Tool 统一能力层：资产注册 + 声明式规则 Gate（fail-closed）+ 申请编排
         self.capability = build_capability_layer(self.generator, self.schema_manager, nl2sql_cfg)
         self.explainer = SQLExplainer(self.llm, self.schema_manager)
+        # 解读节点开关：默认开启；评测脚本（test_env）默认通过环境变量关闭以省 token；
+        # 环境变量取值 1/on/true/yes=开启，0/off/false/no=关闭
+        env_switch = os.environ.get("NL2SQL_SQL_EXPLAINER")
+        if env_switch is not None:
+            self.explainer_enabled = env_switch.strip().lower() in ("1", "on", "true", "yes")
+        else:
+            self.explainer_enabled = bool(features.get("sql_explainer", True))
+        # 人工澄清开关（表筛选阶段向用户反问）：默认开启；评测等无人值守场景
+        # 通过 NL2SQL_CLARIFICATION=off 关闭，关闭后模型即使返回澄清协议也按
+        # “识别失败→回退全量 Schema 继续生成”处理，绝不挂起等待
+        env_clar = os.environ.get("NL2SQL_CLARIFICATION")
+        if env_clar is not None:
+            self.clarification_enabled = env_clar.strip().lower() in ("1", "on", "true", "yes")
+        else:
+            self.clarification_enabled = bool(features.get("clarification", True))
         self.formatter = OutputFormatter()
         self.corrector = SelfCorrector(
             self.llm, self.schema_manager, self.value_linker,
@@ -216,7 +263,8 @@ class NL2SQLPipeline:
                                 {"q_context": "q_context", "d_context": "d_context", "m_answer": "m_answer"})
         # query 主链
         g.add_edge("q_context", "q_select")
-        g.add_edge("q_select", "q_generate")
+        g.add_conditional_edges("q_select", self._r_q_select,
+                                {"q_generate": "q_generate", "finalize": "finalize"})
         g.add_conditional_edges("q_generate", self._r_generate,
                                 {"q_validate": "q_validate", "finalize": "finalize"})
         g.add_conditional_edges("q_validate", self._r_validate,
@@ -254,12 +302,28 @@ class NL2SQLPipeline:
     # ==================================================================
     # 对外入口：iter_run 产出事件 dict；run() 消费并返回聚合结果
     # ==================================================================
-    def iter_run(self, question: str, session_id: str = None) -> Iterator[dict]:
+    def iter_run(self, question: str, session_id: str = None,
+                 reference_turn_id: str = None,
+                 clarify_id: str = None) -> Iterator[dict]:
+        # 人工澄清恢复：用户带着 clarify_id 回答时，取回暂存的原始问题，
+        # 把补充信息拼入有效问题后续跑（暂存一次性消费）；无效/过期 clarify_id 静默忽略
+        if clarify_id and session_id:
+            pending = self.conversation.take_clarify(session_id, clarify_id)
+            if pending:
+                logger.info("恢复澄清会话 %s，用户补充：%s", clarify_id, question[:50])
+                question = (
+                    f"{pending['question']}\n"
+                    f"【用户针对待澄清问题的补充信息，请据此生成 SQL】{question}"
+                )
+                reference_turn_id = pending.get("reference_turn_id") or reference_turn_id
         result = PipelineResult(question=question, session_id=session_id)
+        result.reference_turn_id = reference_turn_id
         tracker = TurnTracker(enabled=self.metrics_enabled)
         initial: NL2SQLState = {
             "question": question,
             "session_id": session_id,
+            "reference_turn_id": reference_turn_id,
+            "clarify_id": clarify_id,
             "result": result,                       # 可变引用：图内就地更新
             "tracker": tracker,
             "attempt": 0,
@@ -278,9 +342,12 @@ class NL2SQLPipeline:
         yield from (chunk for chunk in self.graph.stream(initial, config, stream_mode="custom"))
         return result
 
-    def run(self, question: str, session_id: str = None) -> PipelineResult:
+    def run(self, question: str, session_id: str = None,
+            reference_turn_id: str = None, clarify_id: str = None) -> PipelineResult:
         """同步聚合版本：消费图执行的事件流，返回 PipelineResult"""
-        gen = self.iter_run(question, session_id)
+        gen = self.iter_run(question, session_id,
+                            reference_turn_id=reference_turn_id,
+                            clarify_id=clarify_id)
         try:
             while True:
                 next(gen)
@@ -293,7 +360,12 @@ class NL2SQLPipeline:
     def _n_intent(self, state: NL2SQLState) -> dict:
         result, tracker = state["result"], state["tracker"]
         with tracker.step("意图分类"):
-            result.intent = self.intent_classifier.classify(state["question"]) if self.intent_classifier else "query"
+            if self.intent_classifier:
+                result.intent, intent_usage = self.intent_classifier.classify(state["question"])
+                tracker.add_tokens(intent_usage["prompt_tokens"],
+                                   intent_usage["completion_tokens"], intent_usage["total_tokens"])
+            else:
+                result.intent = "query"
         logger.info("意图分类结果: %s | 问题: %s", result.intent, state["question"])
         _emit("intent", {"intent": result.intent})
         return {"route": result.intent}
@@ -321,12 +393,21 @@ class NL2SQLPipeline:
         """上下文增强：多轮上下文 + Schema检索 + 术语映射 + 值链接"""
         result, tracker = state["result"], state["tracker"]
         question, session_id = state["question"], state["session_id"]
+        reference_turn_id = state.get("reference_turn_id")
         with tracker.step("上下文增强"):
-            conv_ctx = self.conversation.build_context(session_id) if session_id else ""
+            # 显式引用：只注入被引用轮（替代默认上一轮）；否则注入最近一轮（省略式追问）
+            conv_ctx = (
+                self.conversation.build_context(
+                    session_id, reference_turn_id=reference_turn_id)
+                if session_id else ""
+            )
             # Schema 检索（大库 Top-K；小库/未开启返回 None 走全量）；
-            # 多轮场景上轮 SQL 涉及表强制并入；命中表再沿关系图扩展 JOIN 邻接表
-            last_tables = self.conversation.last_tables(session_id)
-            candidate_tables = self._select_candidate_tables(question, last_tables)
+            # 引用/上轮 SQL 涉及表强制并入；命中表再沿关系图扩展 JOIN 邻接表
+            if session_id and reference_turn_id:
+                forced_tables = self.conversation.turn_tables(session_id, reference_turn_id)
+            else:
+                forced_tables = self.conversation.last_tables(session_id) if session_id else []
+            candidate_tables = self._select_candidate_tables(question, forced_tables)
             term_ctx, term_hits = self.term_mapper.build_context(question)
             value_ctx, value_hits = self.value_linker.build_context(question, tables=candidate_tables)
             result.term_mappings = [
@@ -347,25 +428,64 @@ class NL2SQLPipeline:
 
     def _n_q_select(self, state: NL2SQLState) -> dict:
         """第一阶段：表字段识别（LLM 结构化裁剪：needed/maybe/excluded + 字段二分）。
-        成功 → 裁剪后 Schema 文本注入第二阶段；调用/解析/清洗失败 → 空串回退全量 Schema"""
+        成功 → 裁剪后 Schema 文本注入第二阶段；调用/解析/清洗失败 → 空串回退全量 Schema。
+        模型判定问题信息不足 → 人工澄清：暂存现场后路由 finalize，本轮不出 SQL；
+        用户补充后带 clarify_id 重新发起（iter_run 入口恢复现场）。"""
         tracker = state["tracker"]
         with tracker.step("表字段识别"):
             try:
                 sel = self.table_selector.select(
                     state["question"], tables=state.get("candidate_tables"),
+                    conversation_context=state.get("conversation_context", ""),
                 )
             except Exception as e:
                 logger.error("表字段识别节点异常（回退全量 Schema）: %s", str(e).splitlines()[0])
                 sel = None
+            # token 在步骤块内入账（含澄清协议/开关关闭两种形态），避免归入“其他”桶
+            if sel is not None:
+                tracker.add_tokens(sel.prompt_tokens, sel.completion_tokens, sel.total_tokens)
+        if isinstance(sel, ClarificationRequest):
+            if self.clarification_enabled:
+                return self._handle_clarification(state, sel, tracker)
+            # 开关关闭（评测/无人值守）：token 已计入，流程按识别失败回退全量继续
+            logger.info("人工澄清已关闭，忽略澄清请求继续生成：%s", sel.questions)
+            sel = None
         if sel is None:
-            return {"selected_schema": "", "table_selection": {}}
-        tracker.add_tokens(sel.prompt_tokens, sel.completion_tokens, sel.total_tokens)
+            return {"selected_schema": "", "table_selection": {}, "route": "q_generate"}
         return {
             "selected_schema": self.table_selector.render_context(sel),
             "table_selection": {
                 "needed": sel.needed, "maybe": sel.maybe, "excluded": sel.excluded,
             },
+            "route": "q_generate",
         }
+
+    def _handle_clarification(self, state: NL2SQLState,
+                              clar: ClarificationRequest, tracker) -> dict:
+        """构造人工澄清暂停：无会话（无法持久化恢复）时放弃澄清、回退全量继续，
+        避免在不可恢复场景下卡死用户"""
+        result = state["result"]
+        session_id = state.get("session_id")
+        if not session_id:
+            logger.warning("无 session_id，无法暂存澄清现场，回退全量 Schema 继续")
+            return {"selected_schema": "", "table_selection": {}, "route": "q_generate"}
+        clarify_id = self.conversation.save_clarify(
+            session_id,
+            question=state["question"],
+            questions=clar.questions,
+            reference_turn_id=state.get("reference_turn_id"),
+        )
+        # token 已在「表字段识别」步骤块内统一入账，此处不再重复 add_tokens
+        result.need_clarification = True
+        result.clarify_id = clarify_id
+        result.clarification_questions = list(clar.questions)
+        _emit("clarification", {"clarify_id": clarify_id,
+                                "questions": list(clar.questions)})
+        logger.info("发起人工澄清 %s：%s", clarify_id, clar.questions)
+        return {"route": "finalize"}
+
+    def _r_q_select(self, state: NL2SQLState) -> str:
+        return state.get("route") or "q_generate"
 
     def _n_q_generate(self, state: NL2SQLState) -> dict:
         result, tracker = state["result"], state["tracker"]
@@ -387,19 +507,12 @@ class NL2SQLPipeline:
                 if cap_out.get("bypass") == "gate_unhealthy":
                     logger.info("本次生成 bypass 能力层（Gate 不可用，模型自行发挥）")
                 for tr in cap_out["trace"]:
-                    logger.info("能力申请 第%d轮：请求 skills=%s tools=%s；批准=%s；拒绝=%s%s",
-                                tr.round_index, tr.requested_skills, tr.requested_tools,
+                    logger.info("能力申请[%s] 第%d轮：请求 skills=%s tools=%s；批准=%s；拒绝=%s%s",
+                                "generate", tr.round_index, tr.requested_skills, tr.requested_tools,
                                 tr.granted,
                                 [f"{d['kind']}:{d['name']}@{d['rule_id']}" for d in tr.denied],
                                 f"；格式错误：{tr.malformed}" if tr.malformed else "")
-                    result.capability_trail.append({
-                        "round": tr.round_index,
-                        "skills_requested": list(tr.requested_skills),
-                        "tools_requested": list(tr.requested_tools),
-                        "granted": list(tr.granted),
-                        "denied": list(tr.denied),
-                        "malformed": tr.malformed,
-                    })
+                self._record_cap_trail(result, cap_out["trace"], phase="generate")
                 tracker.add_tokens(gen.prompt_tokens, gen.completion_tokens, gen.total_tokens)
             except Exception as e:
                 logger.error("SQL 生成失败: %s", e, exc_info=e)
@@ -414,6 +527,58 @@ class NL2SQLPipeline:
             return {"route": "finalize"}
         _emit("sql", {"sql": result.sql})
         return {"route": "q_validate"}
+
+    @staticmethod
+    def _record_cap_trail(result, trace, phase: str):
+        """把能力编排轨迹落入结果（phase 区分首次生成 generate / 纠错重写 correct）"""
+        for tr in trace:
+            result.capability_trail.append({
+                "phase": phase,
+                "round": tr.round_index,
+                "skills_requested": list(tr.requested_skills),
+                "tools_requested": list(tr.requested_tools),
+                "granted": list(tr.granted),
+                "denied": list(tr.denied),
+                "malformed": tr.malformed,
+            })
+
+    def _capability_rewrite(self, state: NL2SQLState) -> dict:
+        """纠错/性能优化重写走能力层 FC 循环：纠错模型可按需（非强制）申请疑似出错环节的
+        技能、或为可能缺失的表申请 get_table_schema；Gate 不健康/编排异常时回退
+        corrector.rewrite 的无工具一次性重写。返回编排器标准输出 {result, trace, bypass}"""
+        question = state["question"]
+        sql = state["result"].sql
+        error_message = state["error_message"]
+        tables = state.get("candidate_tables")
+        messages = self.corrector.build_rewrite_messages(
+            question, sql, error_message, tables=tables,
+            capability_catalog=self.capability.orchestrator.catalog_text,
+            extra_context=state.get("extra_context", ""),
+        )
+        ctx = ExecutionContext(
+            phase="correct", question=question, intent="query",
+            candidate_tables=tables,
+            attempt=state.get("attempt", 0),
+            opt_rounds=state.get("opt_rounds", 0),
+            extra={"known_tables": list(tables or [])},
+        )
+
+        def fallback():
+            new_sql, usage = self.corrector.rewrite(
+                question, sql, error_message,
+                extra_context=state.get("extra_context", ""), tables=tables)
+            return GenerationResult(
+                sql=new_sql or "",
+                prompt_tokens=usage.get("prompt_tokens", 0),
+                completion_tokens=usage.get("completion_tokens", 0),
+                total_tokens=usage.get("total_tokens", 0),
+            )
+
+        return self.capability.orchestrator.run_messages(
+            messages, ctx=ctx, fallback=fallback,
+            extract_sql=self.corrector._extract_sql,
+            skill_policy="optional",
+        )
 
     def _r_generate(self, state: NL2SQLState) -> str:
         return state["route"]
@@ -549,16 +714,14 @@ class NL2SQLPipeline:
         opt_round = state["opt_rounds"] + 1
         with tracker.step("性能优化"):
             try:
-                rewritten, usage = self.corrector.rewrite(
-                    state["question"], result.sql, state["error_message"],
-                    extra_context=state.get("extra_context", ""),
-                    tables=state.get("candidate_tables"),
-                )
+                cap_out = self._capability_rewrite(state)
+                gen = cap_out["result"]
+                self._record_cap_trail(result, cap_out["trace"], phase="correct")
+                if cap_out.get("bypass"):
+                    logger.info("性能优化重写 bypass 能力层（%s）", cap_out["bypass"])
                 tracker.add_tokens(
-                    usage.get("prompt_tokens", 0),
-                    usage.get("completion_tokens", 0),
-                    usage.get("total_tokens", 0),
-                )
+                    gen.prompt_tokens, gen.completion_tokens, gen.total_tokens)
+                rewritten = gen.sql or None
             except Exception as e:
                 logger.error("性能优化重写调用失败: %s", e)
                 rewritten = None
@@ -616,16 +779,14 @@ class NL2SQLPipeline:
         attempt = state["attempt"] + 1
         with tracker.step("自动纠错"):
             try:
-                rewritten, usage = self.corrector.rewrite(
-                    state["question"], result.sql, state["error_message"],
-                    extra_context=state["extra_context"],
-                    tables=state.get("candidate_tables"),
-                )
+                cap_out = self._capability_rewrite(state)
+                gen = cap_out["result"]
+                self._record_cap_trail(result, cap_out["trace"], phase="correct")
+                if cap_out.get("bypass"):
+                    logger.info("纠错重写 bypass 能力层（%s）", cap_out["bypass"])
                 tracker.add_tokens(
-                    usage.get("prompt_tokens", 0),
-                    usage.get("completion_tokens", 0),
-                    usage.get("total_tokens", 0),
-                )
+                    gen.prompt_tokens, gen.completion_tokens, gen.total_tokens)
+                rewritten = gen.sql or None
             except Exception as e:
                 logger.error("纠错重写调用失败: %s", e)
                 rewritten = None
@@ -662,12 +823,23 @@ class NL2SQLPipeline:
         return {}
 
     def _n_q_explain(self, state: NL2SQLState) -> dict:
-        """解释生成：失败返回空串不阻断（增益能力）"""
+        """解释生成 + SQL/问题一致性裁判：失败返回空串不阻断（增益能力）。
+        解读开关关闭时直接跳过（sql_label 置空，前端不渲染徽章）；
+        开启时只向解读模型注入最终 SQL 实际涉及的表结构。"""
         result, tracker = state["result"], state["tracker"]
+        if not self.explainer_enabled:
+            result.sql_label = ""
+            return {}
         with tracker.step("解释生成"):
-            result.explanation = self.explainer.explain(result.sql)
+            explanation, label, usage = self.explainer.explain(
+                result.sql, state["question"],
+                tables=self._extract_tables(result.sql))
+            result.explanation, result.sql_label = explanation, label
+            tracker.add_tokens(usage["prompt_tokens"],
+                               usage["completion_tokens"], usage["total_tokens"])
         if result.explanation:
-            _emit("explanation", {"text": result.explanation})
+            _emit("explanation", {"text": result.explanation,
+                                  "label": result.sql_label})
         return {}
 
     # ==================================================================
@@ -676,10 +848,18 @@ class NL2SQLPipeline:
     def _n_d_context(self, state: NL2SQLState) -> dict:
         result, tracker = state["result"], state["tracker"]
         question, session_id = state["question"], state["session_id"]
+        reference_turn_id = state.get("reference_turn_id")
         with tracker.step("上下文增强"):
-            conv_ctx = self.conversation.build_context(session_id) if session_id else ""
-            last_tables = self.conversation.last_tables(session_id)
-            candidate_tables = self._select_candidate_tables(question, last_tables)
+            conv_ctx = (
+                self.conversation.build_context(
+                    session_id, reference_turn_id=reference_turn_id)
+                if session_id else ""
+            )
+            if session_id and reference_turn_id:
+                forced_tables = self.conversation.turn_tables(session_id, reference_turn_id)
+            else:
+                forced_tables = self.conversation.last_tables(session_id) if session_id else []
+            candidate_tables = self._select_candidate_tables(question, forced_tables)
         result.executed = False
         return {"extra_context": conv_ctx, "candidate_tables": candidate_tables}
 
@@ -714,10 +894,21 @@ class NL2SQLPipeline:
 
     def _n_d_explain(self, state: NL2SQLState) -> dict:
         result, tracker = state["result"], state["tracker"]
-        with tracker.step("解释生成"):
-            explanation = self.explainer.explain(result.sql) or "该语句为写操作，按安全策略仅生成不执行。"
-        result.explanation = f"（按安全策略，写操作仅生成 SQL 供确认，不会执行）{explanation}"
-        _emit("explanation", {"text": result.explanation})
+        prefix = "（按安全策略，写操作仅生成 SQL 供确认，不会执行）"
+        if self.explainer_enabled:
+            with tracker.step("解释生成"):
+                explanation, label, usage = self.explainer.explain(
+                    result.sql, state["question"],
+                    tables=self._extract_tables(result.sql))
+                tracker.add_tokens(usage["prompt_tokens"],
+                                   usage["completion_tokens"], usage["total_tokens"])
+        else:
+            explanation, label = "", ""
+        result.explanation = f"{prefix}{explanation or '该语句为写操作，按安全策略仅生成不执行。'}"
+        result.sql_label = label
+        # 无 label（解读关闭）时前端只显示文案、不渲染裁判徽章
+        _emit("explanation",
+              {"text": result.explanation, **({"label": label} if label else {})})
         # dml 不执行，推送空结果标记
         _emit("result", {
             "query_id": None, "columns": [], "rows": [], "total": 0,
@@ -761,12 +952,16 @@ class NL2SQLPipeline:
         result.usage = usage
         _emit("usage", usage)
 
-        # 记录轮次（含回放所需的解释/结果快照/统计）；失败轮次与 meta 不记录
-        if session_id and not result.error and result.intent in ("query", "dml"):
-            self.conversation.add_turn(
+        # 记录轮次（含回放所需的解释/结果快照/统计）；
+        # 失败轮次、meta、人工澄清暂停轮均不记录（澄清只暂存现场，不产生问答轮）
+        turn_id = None
+        if (session_id and not result.error
+                and result.intent in ("query", "dml")
+                and not result.need_clarification):
+            turn = self.conversation.add_turn(
                 session_id, question, result.sql,
                 tables=self._extract_tables(result.sql), intent=result.intent,
-                explanation=result.explanation,
+                explanation=result.explanation, sql_label=result.sql_label,
                 result=(
                     {
                         "columns": result.columns,
@@ -778,7 +973,13 @@ class NL2SQLPipeline:
                 ),
                 usage=usage,
             )
-        _emit("done", {})
+            turn_id = turn.turn_id if turn else None
+        # 澄清暂停时 done 同时回传 clarify 字段，非澄清轮回传 turn_id 供前端“引用”
+        _emit("done", {
+            "turn_id": turn_id,
+            "clarify_id": result.clarify_id,
+            "need_clarification": result.need_clarification,
+        })
         return {}
 
     # ==================================================================

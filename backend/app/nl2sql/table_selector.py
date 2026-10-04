@@ -1,6 +1,7 @@
 # 表字段识别（SQL 生成前的第一阶段）：让 LLM 在全量表结构上先做裁剪——
-# 输出结构化 JSON：needed（确定使用的表 + use_columns/other_columns 字段二分）、
-# maybe（可能使用，仅表名）、excluded（不需要，仅表名）；
+# 模型只需输出精简 JSON：needed（确定使用的表 + use_columns 仅会用到的字段）、
+# maybe（可能使用，仅表名）；other_columns 与 excluded 由本模块依据真实 Schema
+# 反推补全（模型不回抄，节省输出 token，且不信任模型清单的完整性）。
 # 第二阶段 SQL 生成器只收这份裁剪结果而非全量 Schema，需要更多表时走表结构获取工具。
 # 任何解析/清洗失败一律返回 None，由流水线回退全量 Schema（宁可不裁剪，不可阻断）。
 
@@ -32,6 +33,20 @@ class TableSelection:
     total_tokens: int = 0
 
 
+@dataclass
+class ClarificationRequest:
+    """人工澄清请求：问题存在无法靠表结构消歧的缺失信息（如“这几天”“营收额口径”）。
+
+    与 TableSelection 互斥：select() 返回本对象时，流水线暂停并向用户追问，
+    用户补充后带着 clarify_id 重新发起，再走正常识别/生成链路。"""
+
+    questions: List[str] = field(default_factory=list)   # 待用户确认的问题（可一次多个）
+    raw_output: str = ""
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+
+
 class TableSelector:
     """LLM 表字段识别 + 结构化清洗 + 第二阶段 Prompt 上下文渲染"""
 
@@ -42,8 +57,10 @@ class TableSelector:
         self._template = read_text(BACKEND_ROOT / "prompts" / "table_select_prompt.txt")
 
     # ------------------------------------------------------------------
-    def select(self, question: str, tables: Optional[List[str]] = None) -> Optional[TableSelection]:
-        """调用识别模型并清洗结果；tables 限定候选表范围（None=全库）。失败返回 None"""
+    def select(self, question: str, tables: Optional[List[str]] = None,
+               conversation_context: str = ""):
+        """调用识别模型并清洗结果；tables 限定候选表范围（None=全库）。
+        返回 TableSelection（正常）/ ClarificationRequest（需向用户澄清）/ None（失败回退全量）"""
         all_tables = self.schema_manager.get_table_names() if tables is None else [
             t for t in tables if t in set(self.schema_manager.get_table_names())
         ]
@@ -60,6 +77,7 @@ class TableSelector:
             schema_context=schema_context,
             relation_context=relation_context,
             question=question,
+            conversation_context=conversation_context or "（无）",
         )
         try:
             result = self.llm.chat([{"role": "user", "content": prompt}])
@@ -73,6 +91,16 @@ class TableSelector:
                            (result.content or "")[:200].replace("\n", " "))
             return None
 
+        # 人工澄清：模型显式判定问题信息不足时，返回澄清请求（优先级高于表筛选结果）
+        clar = self._parse_clarification(data)
+        if clar is not None:
+            clar.raw_output = result.content
+            clar.prompt_tokens = result.prompt_tokens
+            clar.completion_tokens = result.completion_tokens
+            clar.total_tokens = result.total_tokens
+            logger.info("表字段识别判定需人工澄清：%s", clar.questions)
+            return clar
+
         sel = self._sanitize(data, all_tables)
         if sel is None:
             return None
@@ -83,6 +111,21 @@ class TableSelector:
         logger.info("表字段识别完成：needed=%d maybe=%d excluded=%d",
                     len(sel.needed), len(sel.maybe), len(sel.excluded))
         return sel
+
+    # ------------------------------------------------------------------ 澄清解析
+    @staticmethod
+    def _parse_clarification(data: dict) -> Optional[ClarificationRequest]:
+        """严格识别澄清协议：need_clarification 必须是布尔 true，
+        questions 必须是非空字符串数组（1~4 条），否则一律按普通筛选结果处理。"""
+        if data.get("need_clarification") is not True:
+            return None
+        raw = data.get("questions")
+        if not isinstance(raw, list):
+            return None
+        questions = [str(q).strip() for q in raw if str(q).strip()]
+        if not questions:
+            return None
+        return ClarificationRequest(questions=questions[:4])
 
     # ------------------------------------------------------------------ 清洗
     def _sanitize(self, data: dict, all_tables: List[str]) -> Optional[TableSelection]:

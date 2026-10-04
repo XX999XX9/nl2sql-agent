@@ -2,26 +2,68 @@
 // 一次提问 → 一张回复卡片（ReplyCard）：各事件原地填充卡片对应分区
 // 事件协议（与后端 schemas/chat.ChatEvent 对齐）：
 //   intent → 卡片头意图标签；sql → SQL分区；executing/correcting → 状态行；
-//   correcting → 纠错轨迹面板；explanation → 解读分区；result → 查询结果tab；
-//   usage → 底部统计摘要行（悬停看分步明细）；error/done
+//   clarification → 卡片内联澄清问答；correcting → 纠错轨迹面板；
+//   explanation → 解读分区（含 conform/risk/unknown 裁判标签）；result → 查询结果tab；
+//   usage → 底部统计摘要行（悬停看分步明细）；error/done（done 携带 turn_id 绑定引用）
 // 会话状态由 session.js 管理（window.AppState.sessionId），本模块只消费
 
 (function () {
   const messageList = document.getElementById("message-list");
   const input = document.getElementById("chat-input");
   const sendBtn = document.getElementById("chat-send");
+  const quoteBar = document.getElementById("quote-bar");
+  const quoteCancel = document.getElementById("quote-cancel");
 
   // 当前流式进行中的回复卡片
   let activeCard = null;
+  // 待发送的显式引用 {turn_id, question}（点历史卡片「引用」设置，发送后清除）
+  let pendingReference = null;
+  // 本轮用户原文（done 回来后绑定卡片引用句柄）
+  let activeQuestion = "";
 
   // ---------------------------------------------------------------- 基础渲染
-  function appendMessage(role, text) {
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => (
+      { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  function appendMessage(role, text, quotedText) {
     const div = document.createElement("div");
     div.className = `message ${role}`;
-    div.textContent = text;
+    if (quotedText) {
+      const q = document.createElement("span");
+      q.className = "bubble-quote";
+      q.textContent = `引用：${quotedText}`;
+      div.appendChild(q);
+    }
+    const body = document.createElement("span");
+    body.textContent = text;
+    div.appendChild(body);
     messageList.appendChild(div);
     messageList.scrollTop = messageList.scrollHeight;
   }
+
+  // ---------------------------------------------------------------- 引用条
+  function renderQuoteBar() {
+    if (!pendingReference) {
+      quoteBar.hidden = true;
+      quoteBar.querySelector(".quote-bar-text").textContent = "";
+      return;
+    }
+    quoteBar.hidden = false;
+    quoteBar.querySelector(".quote-bar-text").textContent = pendingReference.question;
+  }
+
+  function setReference(ref) {
+    pendingReference = ref;
+    renderQuoteBar();
+    input.focus();
+  }
+
+  quoteCancel.addEventListener("click", () => {
+    pendingReference = null;
+    renderQuoteBar();
+  });
 
   // ---------------------------------------------------------------- 事件分流（全部路由进当前卡片）
   function handleEvent(ev) {
@@ -38,13 +80,18 @@
       case "executing":
         activeCard.setStatus("执行中…");
         break;
+      case "clarification":
+        // 表筛选阶段的人工澄清：卡片内联展示追问，用户在卡片内回答后自动续跑
+        activeCard.setStatus(null);
+        activeCard.setClarification(ev.data);
+        break;
       case "correcting":
         activeCard.setStatus(`纠错中（第 ${ev.data.round} 轮）`);
         activeCard.addCorrection(ev.data);
         break;
       case "explanation":
         activeCard.setStatus(null);
-        activeCard.setExplanation(ev.data.text);
+        activeCard.setExplanation(ev.data.text, ev.data.label);
         break;
       case "result":
         activeCard.setStatus(null);
@@ -63,6 +110,10 @@
         break;
       case "done":
         activeCard.setStatus(null);
+        // 落库成功才有 turn_id；绑定后该卡片可被下一轮引用
+        if (ev.data.turn_id) {
+          activeCard.bindQuote(ev.data.turn_id, activeQuestion);
+        }
         break;
     }
   }
@@ -85,21 +136,34 @@
     });
   }
 
-  async function sendMessage(text) {
+  async function sendMessage(text, opts = {}) {
     if (!text || !text.trim()) return;
-    appendMessage("user", text);
+    const ref = pendingReference;
+    appendMessage("user", text, ref ? ref.question : null);
+    pendingReference = null;
+    renderQuoteBar();
     activeCard = ReplyCard.create(messageList);
-    activeCard.setStatus("识别意图中…");
+    activeQuestion = text;
+    activeCard.setStatus(opts.clarify_id ? "正在根据补充信息生成…" : "识别意图中…");
     setSending(true);
+    const payload = { message: text, session_id: AppState.sessionId };
+    if (ref) payload.reference_turn_id = ref.turn_id;
+    if (opts.clarify_id) payload.clarify_id = opts.clarify_id;
     try {
       await waitForSession();
-      await api.streamChat({ message: text, session_id: AppState.sessionId }, handleEvent);
+      await api.streamChat(payload, handleEvent);
     } catch (err) {
       activeCard.setError(`请求失败：${err.message}`);
     } finally {
       activeCard.setStatus(null);
       setSending(false);
+      input.focus();
     }
+  }
+
+  // 卡片内联澄清的提交入口
+  function answerClarification(clarifyId, text) {
+    return sendMessage(text, { clarify_id: clarifyId });
   }
 
   function submit() {
@@ -137,5 +201,10 @@
   bindPanelToggle("toggle-sessions", "session-panel");
   bindPanelToggle("toggle-dict", "dict-panel");
 
-  window.chat = { sendMessage, createReplyCard: () => ReplyCard.create(messageList) };
+  window.chat = {
+    sendMessage,
+    setReference,
+    answerClarification,
+    createReplyCard: () => ReplyCard.create(messageList),
+  };
 })();

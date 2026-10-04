@@ -1,6 +1,6 @@
 # 声明式规则引擎：策略与代码分离。规则存 YAML（可独立测试/版本化/灰度/回滚，改策略不发版）。
 # 规则结构：
-#   id / description / priority（升序评估）/ action(allow|deny) / reason / correction_hint
+#   id / description / priority（升序评估）/ action(allow|deny|ask[人工审批,预埋暂不生效]) / reason / correction_hint
 #   when: 条件列表，全部满足才命中（AND）。支持：
 #     kind: skill | tool | "*"
 #     name_in: [..] / name: ".."
@@ -48,6 +48,7 @@ class RuleEngine:
     def __init__(self, rules: List[Rule], forward_keys: Optional[List[str]] = None):
         self.rules = sorted(rules, key=lambda r: r.priority)
         self.forward_only_keys = set(forward_keys or FORWARD_COND_KEYS)
+        self.meta: Dict[str, Any] = {}
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> "RuleEngine":
@@ -62,7 +63,8 @@ class RuleEngine:
             try:
                 rid = str(item["id"])
                 action = str(item["action"]).lower()
-                if action not in ("allow", "deny"):
+                # ask=命中高风险能力时挂起等待人工审批（审批功能当前未启用，Gate 会按 deny 处理）
+                if action not in ("allow", "deny", "ask"):
                     raise ValueError(f"action 非法: {action}")
                 rules.append(Rule(
                     id=rid,
@@ -75,7 +77,9 @@ class RuleEngine:
                 ))
             except (KeyError, TypeError, ValueError) as e:
                 raise RuleConfigError(f"{p} 第 {i + 1} 条规则非法: {e}") from e
-        return cls(rules, list(data.get("forward_only_keys", [])))
+        engine = cls(rules, list(data.get("forward_only_keys", [])))
+        engine.meta = dict(data.get("meta") or {})
+        return engine
 
     def evaluate(self, req: CapabilityRequest, ctx: ExecutionContext
                  ) -> Optional[tuple]:

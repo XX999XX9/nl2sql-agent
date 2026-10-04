@@ -30,24 +30,32 @@ class IntentClassifier:
         self.llm = llm
         self._template = read_text(BACKEND_ROOT / "prompts" / "intent_prompt.txt")
 
-    def classify(self, question: str) -> str:
-        """返回 query / dml / meta；任何异常兜底为 query（走主链路最安全）"""
+    def classify(self, question: str) -> tuple:
+        """返回 (intent, usage)：intent 为 query/dml/meta，usage 为本次 LLM 调用的
+        token 用量（正则快路径不调模型，返回零值）；任何异常兜底为 query（最安全）"""
+        zero = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         if _DML_PATTERN.search(question):
-            return "dml"
+            return "dml", zero
         if _META_PATTERN.search(question):
-            return "meta"
-        return self._classify_by_llm(question) or "query"
+            return "meta", zero
+        intent, usage = self._classify_by_llm(question)
+        return (intent or "query"), (usage or zero)
 
-    def _classify_by_llm(self, question: str) -> Optional[str]:
+    def _classify_by_llm(self, question: str) -> tuple:
         try:
             result = self.llm.chat([
                 {"role": "user", "content": self._template.format(question=question)},
             ])
+            usage = {
+                "prompt_tokens": getattr(result, "prompt_tokens", 0) or 0,
+                "completion_tokens": getattr(result, "completion_tokens", 0) or 0,
+                "total_tokens": getattr(result, "total_tokens", 0) or 0,
+            }
             text = result.content.strip().lower()
             for intent in VALID_INTENTS:
                 if intent in text:
-                    return intent
-            return None
+                    return intent, usage
+            return None, usage
         except Exception as e:
             logger.warning("LLM 意图分类失败，兜底 query: %s", e)
-            return None
+            return None, None

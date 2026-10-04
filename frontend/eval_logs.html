@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>评测日志审查 - 智数通 NL2SQL Agent</title>
+    <link rel="stylesheet" href="static/css/main.css" />
+    <link rel="stylesheet" href="static/css/eval_logs.css?v=2" />
+  </head>
+  <body>
+    <header class="topbar">
+      <h1>评测日志审查</h1>
+      <span style="font-size:12px;color:#6b7280">test_env/results 只读浏览</span>
+      <a class="back-link" href="/">← 返回对话</a>
+    </header>
+
+    <div class="layout">
+      <!-- 左：历次运行 -->
+      <aside class="run-sidebar">
+        <div class="run-group-title">最新全量结果</div>
+        <div id="group-latest"><div class="run-empty">加载中…</div></div>
+        <div class="run-group-title">失败题复测（latest/fail_test）</div>
+        <div id="group-fail_tests"><div class="run-empty">加载中…</div></div>
+        <div class="run-group-title">全量测试历史（all_history）</div>
+        <div id="group-all_history"><div class="run-empty">加载中…</div></div>
+        <div class="run-group-title">非全量测试历史（history）</div>
+        <div id="group-history"><div class="run-empty">加载中…</div></div>
+      </aside>
+
+      <!-- 右：运行详情 -->
+      <main class="content" id="content">
+        <div class="empty-hint">← 从左侧选择一次测试运行开始审查</div>
+      </main>
+    </div>
+
+    <script src="static/js/eval_logs.js?v=2"></script>
+  </body>
+</html>

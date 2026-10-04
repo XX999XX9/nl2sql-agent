@@ -120,7 +120,9 @@
         const card = ReplyCard.create(messageList);
         if (t.intent) card.setIntent(t.intent);
         if (t.sql) card.setSQL({ sql: t.sql });
-        if (t.explanation) card.setExplanation(t.explanation);
+        if (t.explanation) card.setExplanation(t.explanation, t.sql_label);
+        // 历史卡片可被新提问显式引用
+        if (t.turn_id) card.bindQuote(t.turn_id, t.question);
         // 结果快照本地渲染（无 query_id，本地切片分页）
         if (t.result && t.result.columns && t.result.columns.length) {
           card.setResult({
