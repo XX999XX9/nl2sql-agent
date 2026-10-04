@@ -217,6 +217,7 @@ class NL2SQLPipeline:
             self.llm, self.schema_manager, self.value_linker,
             max_rounds=nl2sql_cfg.get("correction", {}).get("max_rounds", 2),
             relation_graph=self.relation_graph,
+            skill_knowledge=self.capability.orchestrator.skill_knowledge,
         )
         self.graph = self._build_graph()
 
@@ -553,6 +554,7 @@ class NL2SQLPipeline:
         messages = self.corrector.build_rewrite_messages(
             question, sql, error_message, tables=tables,
             capability_catalog=self.capability.orchestrator.catalog_text,
+            skill_knowledge=self.capability.orchestrator.skill_knowledge,
             extra_context=state.get("extra_context", ""),
         )
         ctx = ExecutionContext(

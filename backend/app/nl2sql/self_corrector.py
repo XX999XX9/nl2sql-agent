@@ -29,12 +29,14 @@ class SelfCorrector:
     """SQL 自动纠错器：诊断 + 回喂重写"""
 
     def __init__(self, llm: LLMClient, schema_manager: SchemaManager,
-                 value_linker: ValueLinker, max_rounds: int = 2, relation_graph=None):
+                 value_linker: ValueLinker, max_rounds: int = 2, relation_graph=None,
+                 skill_knowledge: str = ""):
         self.llm = llm
         self.schema_manager = schema_manager
         self.value_linker = value_linker
         self.max_rounds = max_rounds
         self.relation_graph = relation_graph   # 关系图谱：纠错重写时同样注入关联键区块
+        self.skill_knowledge = skill_knowledge  # SQL 写作专项规则（内联，模型不感知技能形态）
         self._template = read_text(BACKEND_ROOT / "prompts" / "correct_prompt.txt")
         self._judge_template = read_text(BACKEND_ROOT / "prompts" / "fanout_judge_prompt.txt")
 
@@ -219,9 +221,10 @@ class SelfCorrector:
     def build_rewrite_messages(self, question: str, sql: str, error_message: str,
                                tables: Optional[List[str]] = None,
                                capability_catalog: str = "",
+                               skill_knowledge: Optional[str] = None,
                                extra_context: str = "") -> List[dict]:
-        """组装纠错重写的初始消息（能力编排器复用：纠错模型同样可申请 skill/tool，
-        但模板口径为“可选申请”——能直接纠错就不调用）。"""
+        """组装纠错重写的初始消息（能力编排器复用：纠错模型仍可调用注册工具，
+        如 get_table_schema；SQL 写作专项规则以 skill_knowledge 内联，模型无需申请）。"""
         schema_context = (
             self.schema_manager.build_context_for_tables(tables)
             if tables else self.schema_manager.schema_context
@@ -237,6 +240,7 @@ class SelfCorrector:
             sql=sql,
             error=error_message,
             capability_catalog=self.build_capability_block(capability_catalog),
+            skill_knowledge=self.skill_knowledge if skill_knowledge is None else skill_knowledge,
         )
         if extra_context:
             prompt = f"{extra_context}\n\n{prompt}"
@@ -244,17 +248,15 @@ class SelfCorrector:
 
     @staticmethod
     def build_capability_block(catalog_text: str) -> str:
-        """纠错模板的可选能力区块：无目录（Gate bypass/无能力回退）时返回空串"""
+        """纠错模板的可选工具区块：无目录（Gate bypass/无工具回退）时返回空串。
+        只描述工具调用，不再出现任何技能申请入口。"""
         if not catalog_text:
             return ""
         return (
-            "\n【可申请的能力（可选，不强制使用）】\n"
-            "你应当首先尝试依据错误信息直接完成纠错。仅在以下情况按需调用函数：\n"
-            "- 无法仅凭错误信息直接定位修正方式、怀疑问题出在 JOIN/GROUP BY 聚合、"
-            "TopN、差集、日期处理等环节时，可调用 apply_skill 申请对应技能的详细指引；\n"
-            "- 怀疑错误是因为缺少其他表或表中其他字段时，可调用 get_table_schema "
-            "获取可能需要的表结构后再修正。\n"
-            "能直接修正时不要调用任何函数。可申请清单：\n"
+            "\n【可用工具（可选，不强制使用）】\n"
+            "你应当首先尝试依据错误信息直接完成纠错。仅当怀疑错误是因为缺少其他表或"
+            "表中其他字段时，可调用 get_table_schema 获取可能需要的表结构后再修正。"
+            "能直接修正时不要调用任何函数。可用工具清单：\n"
             f"{catalog_text}\n"
         )
 
@@ -279,6 +281,7 @@ class SelfCorrector:
             sql=sql,
             error=error_message,
             capability_catalog=self.build_capability_block(""),
+            skill_knowledge=self.skill_knowledge,
         )
         if extra_context:
             prompt = f"{extra_context}\n\n{prompt}"

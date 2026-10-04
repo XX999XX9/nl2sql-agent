@@ -37,67 +37,39 @@ class CapabilityTrace:
 
 
 def render_catalog(registry: CapabilityRegistry) -> str:
-    """能力清单文本（仅元数据：名称/用途/风险/参数；不含技能正文）。
-    注入系统提示，作为模型判断"该申请哪个技能"的场景依据（比 enum 描述更详细）"""
+    """模型可见的能力清单文本：只包含注册的 Tool（名称/用途/风险/参数）。
+
+    Skill 不在模型侧暴露——技能知识已由服务端直接内联进系统提示词，
+    模型既看不到技能枚举，也没有申请入口；skill 注册/Grant 架构仍在服务端保留。"""
     lines: List[str] = []
-    skills = registry.catalog("skill")
-    if skills:
-        lines.append("Skill 写作指引（risk 均为 low；通过函数 apply_skill(skill_name=名称) 申请）：")
-        for m in skills:
-            lines.append(f"- {m.name}【{m.title}】：{m.when_to_use}")
     tools = registry.catalog("tool")
-    if tools:
-        lines.append("")
-        lines.append("Tool 工具（直接以同名函数调用）：")
-        for m in tools:
-            lines.append(f"- {m.name}【{m.title}】（risk={m.risk}）：{m.when_to_use}")
-            if m.args_schema:
-                lines.append(f"  参数：{m.args_schema}")
+    for m in tools:
+        lines.append(f"- {m.name}【{m.title}】（risk={m.risk}）：{m.when_to_use}")
+        if m.args_schema:
+            lines.append(f"  参数：{m.args_schema}")
     return "\n".join(lines)
 
 
 class CapabilityOrchestrator:
     def __init__(self, generator, gate: SkillToolGate, registry: CapabilityRegistry,
-                 max_cap_rounds: int = 2):
+                 max_cap_rounds: int = 2, skill_knowledge: str = ""):
         self.generator = generator
         self.gate = gate
         self.registry = registry
         self.max_cap_rounds = max_cap_rounds
         self.catalog_text = render_catalog(registry)
+        # 技能知识全文（服务端装配时注入）：直接内联进生成/纠错提示词，
+        # 模型始终可见这些写作规则，但不知晓"技能"这一能力形态的存在
+        self.skill_knowledge = skill_knowledge
 
     # ------------------------------------------------------------ tools 定义
     def build_openai_tools(self, skill_policy: str = "mandatory") -> List[dict]:
-        """从注册表动态生成 OpenAI tools 数组（注册表是工具定义的唯一来源）：
-        apply_skill 为技能统一申请入口；其余每个注册 tool 一个 function。
-        skill_policy=mandatory：生成阶段强制申请口径；
-        skill_policy=optional：纠错阶段“能直接修正就不申请”的可选口径。"""
-        skill_desc = (
-            "申请获取某个 SQL 写作技能的详细指引。生成 SQL 前，只要目标语句涉及该技能"
-            "覆盖的场景就必须先调用本函数获取指引，再输出 SQL；可在同一条回复中并行调用"
-            "多个技能。严禁在未获取相关技能指引的情况下直接生成涉及该场景的 SQL。"
-            if skill_policy == "mandatory" else
-            "申请获取某个 SQL 写作技能的详细指引（可选）：当你无法仅凭错误信息直接定位"
-            "修正方式、怀疑问题出在 JOIN/GROUP BY 聚合/TopN/差集/日期处理等某个技能覆盖的"
-            "环节时再调用；能直接修正时不要调用。"
-        )
-        tools: List[dict] = [{
-            "type": "function",
-            "function": {
-                "name": SKILL_DISPATCH_TOOL,
-                "description": skill_desc,
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "skill_name": {
-                            "type": "string",
-                            "enum": [m.name for m in self.registry.catalog("skill")],
-                            "description": "技能名称（见系统提示中的技能清单）",
-                        },
-                    },
-                    "required": ["skill_name"],
-                },
-            },
-        }]
+        """从注册表动态生成 OpenAI tools 数组：只包含注册的 tool，
+        每个注册 tool 一个 function。Skill 不下发（无 apply_skill 入口）。
+
+        skill_policy 参数保留仅为兼容生成/纠错两处调用签名，当前不再影响
+        tools 内容（技能已内联提示词，无需按阶段区分申请口径）。"""
+        tools: List[dict] = []
         for m in self.registry.catalog("tool"):
             tools.append({
                 "type": "function",
@@ -129,6 +101,7 @@ class CapabilityOrchestrator:
             reference_context=reference_context,
             selected_schema=selected_schema,
             capability_catalog=self.catalog_text,
+            skill_knowledge=self.skill_knowledge,
         )
 
         def fallback():
@@ -138,6 +111,7 @@ class CapabilityOrchestrator:
                 reference_context=reference_context,
                 selected_schema=selected_schema,
                 capability_catalog="",
+                skill_knowledge=self.skill_knowledge,
             )
 
         return self.run_messages(

@@ -279,7 +279,7 @@ body {
 .result-table .preview-table { max-height: 240px; max-width: 100%; }
 .empty-rows { color: var(--el-text-2); font-size: 12px; padding: 12px 4px; }
 
-@media (max-width: 720px) { .result-compare { grid-template-columns: 1fr; } }
+@media (max-width: 560px) { .result-compare { grid-template-columns: 1fr; } }
 
 .load-more-wrap { text-align: center; padding: 14px 0 4px; }
 .loading, .no-more { text-align: center; color: var(--el-text-2); font-size: 13px; padding: 16px; }

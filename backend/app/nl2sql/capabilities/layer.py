@@ -13,7 +13,7 @@ from .gate import SkillToolGate
 from .orchestrator import CapabilityOrchestrator
 from .registry import CapabilityRegistry
 from .rules import RuleConfigError, RuleEngine
-from .skills import register_skills
+from .skills import load_skill_knowledge, register_skills
 from .tools import register_builtin_tools
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,10 @@ class CapabilityLayer:
 def build_capability_layer(generator, schema_manager, nl2sql_cfg: dict) -> CapabilityLayer:
     cap_cfg = nl2sql_cfg.get("capabilities", {})
     registry = CapabilityRegistry()
-    skill_names = register_skills(registry, BACKEND_ROOT / "prompts" / "skills")
+    skills_dir = BACKEND_ROOT / "prompts" / "skills"
+    skill_names = register_skills(registry, skills_dir)
+    # 技能知识内联：不经过模型侧能力通道，直接作为写作规则写进生成/纠错提示词
+    skill_knowledge = load_skill_knowledge(skills_dir)
     tool_names = register_builtin_tools(registry, schema_manager)
 
     audit_path = Path(cap_cfg.get("audit_path", BACKEND_ROOT / "logs" / "gate_audit.jsonl"))
@@ -54,6 +57,7 @@ def build_capability_layer(generator, schema_manager, nl2sql_cfg: dict) -> Capab
     orchestrator = CapabilityOrchestrator(
         generator, gate, registry,
         max_cap_rounds=int(cap_cfg.get("max_cap_rounds", 2)),
+        skill_knowledge=skill_knowledge,
     )
     logger.info("能力层就绪：skills=%s tools=%s healthy=%s",
                 skill_names, tool_names, gate.healthy)

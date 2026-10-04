@@ -3,14 +3,20 @@
 # "机器键盘→机械键盘"类用户表述映射为库中真实值，作为补充上下文注入 Prompt，
 # 从源头消除值不匹配导致的"查不到数"
 #
+# 适用场景（2026-10 收紧）：仅中文/编号类场景启用，不在英文场景工作。
+# 候选实体只抽取三类：①引号包裹内容；②连续中文片段；③含数字的编号/代码串。
+# 英文专有名词序列、全大写缩写不再抽取（英文 Spider 类问题误报远多于收益）。
+#
 # 防误报设计（2026-10 修复"Port Chelsea→Port Oceane"类误导）：
-# 1. 只在抽取出的"实体片段"内部做窗口匹配，不再对整句任意字符切片
-#    （避免 "hat i"→"Haiti"、"else"→"esse" 这类英文虚词撞 Lorem ipsum 假文本）；
+# 1. 只在抽取出的"实体片段"内部做窗口匹配，不再对整句任意字符切片；
 # 2. 用户实体在库中精确存在时短路，不再对该实体做任何模糊"纠正"；
 # 3. 模糊命中需同时通过双向覆盖率、首字符锚定、最大连续块、多 token 核心词
 #    相似度（去掉 Port/New/Saint 等通用地名前缀后仍要相似）多重门槛；
 # 4. 长文本列（description/summary/content 等）不参与采样；
 # 5. 同一实体在同一列模糊命中多个值视为歧义，全部丢弃不注入。
+#
+# 采样规模约束：先 COUNT(DISTINCT)，独特值超过 400 的高基数列整列放弃
+# （枚举/字典类短值列才采样）；未超过的列最多取 200 个 DISTINCT 值。
 
 import re
 import time
@@ -31,7 +37,8 @@ _VALUE_COVERAGE = 0.6     # 匹配字符数占库值长度的比例
 _WINDOW_COVERAGE = 0.6    # 匹配字符数占用户窗口长度的比例（双向覆盖）
 _MIN_FUZZY_MATCH = 3      # 模糊命中至少 3 个匹配字符（短值只走精确匹配，防误报）
 _MIN_BLOCK = 2            # 至少有一个连续匹配块达到该长度（防纯散落字符拼凑）
-_SAMPLE_LIMIT = 200       # 每列采样 DISTINCT 值上限
+_SAMPLE_LIMIT = 200       # 低基数列每列采样 DISTINCT 值上限
+_MAX_DISTINCT = 400       # 列的 DISTINCT 总数超过该值则整列不采样（高基数列放弃）
 _CACHE_TTL = 3600         # 采样缓存有效期（秒）
 _MAX_CASEFIX_LEN = 3      # 大小写纠正提示的最短值长度
 
@@ -39,14 +46,7 @@ _MAX_CASEFIX_LEN = 3      # 大小写纠正提示的最短值长度
 _LONG_TEXT_HINT = ("description", "summary", "content", "comment", "remark",
                    "note", "detail", "_text")
 
-# 句首疑问/动词（英文专有名词检测时用于排除 "What/Which/List" 等句首大写词）
-_STOP_STARTERS = {
-    "what", "which", "who", "whom", "whose", "where", "when", "how", "why",
-    "list", "find", "give", "show", "name", "count", "tell", "display",
-    "return", "get",
-}
-
-# 多 token 值匹配时忽略的通用前缀词（地名/人名中的高频前缀，本身不携带区分度）
+# 多 token 值匹配时忽略的通用前缀词（仅对引号包裹的英文实体仍可能生效）
 _GENERIC_TOKENS = {
     "port", "new", "old", "north", "south", "east", "west", "upper", "lower",
     "great", "grand", "san", "santa", "saint", "st", "fort", "mount", "la",
@@ -54,11 +54,9 @@ _GENERIC_TOKENS = {
     "das", "the", "of", "and",
 }
 
-# 候选实体抽取正则
-_PROPER_SEQ = re.compile(r"[A-Z][A-Za-z]+(?:[\s'\-]+[A-Z][A-Za-z]+)*")
+# 候选实体抽取正则（仅中文/编号场景：引号内容、CJK 连续片段、含数字代码串）
 _CJK_RUN = re.compile(r"[\u4e00-\u9fff]{2,}")
 _CODE_RUN = re.compile(r"[A-Za-z0-9]*\d[A-Za-z0-9\-]{1,}")
-_ABBR_RUN = re.compile(r"[A-Z]{2,}")
 _QUOTED = re.compile(r'["“「\']([^"”」\']{2,60})["”」\']')
 
 
@@ -91,12 +89,14 @@ class ValueLinker:
 
     # ------------------------------------------------------------------
     def _ensure_samples(self, force: bool = False):
-        """采样全部表的短字符串列（varchar/char，排除 text 与长文本列）
-        DISTINCT 值，带 TTL 缓存"""
+        """采样全部表的短字符串列（varchar/char，排除 text 与长文本列）：
+        先 COUNT(DISTINCT)，独特值 > _MAX_DISTINCT 的高基数列整列放弃；
+        其余列取至多 _SAMPLE_LIMIT 个 DISTINCT 值。结果带 TTL 缓存"""
         if not force and self._samples and time.time() - self._sampled_at < _CACHE_TTL:
             return
         conn = self._connect()
         samples: Dict[str, List[str]] = {}
+        skipped_high_card = 0
         try:
             with conn.cursor() as cur:
                 cur.execute(
@@ -110,6 +110,14 @@ class ValueLinker:
                 for tbl, col in cols:
                     key = f"{tbl}.{col}"
                     cur.execute(
+                        f"SELECT COUNT(DISTINCT `{col}`) FROM `{tbl}` "
+                        f"WHERE `{col}` IS NOT NULL",
+                    )
+                    distinct_n = int(cur.fetchone()[0] or 0)
+                    if distinct_n > _MAX_DISTINCT:
+                        skipped_high_card += 1
+                        continue
+                    cur.execute(
                         f"SELECT DISTINCT `{col}` FROM `{tbl}` WHERE `{col}` IS NOT NULL LIMIT %s",
                         (_SAMPLE_LIMIT,),
                     )
@@ -119,7 +127,8 @@ class ValueLinker:
         self._samples = samples
         self._sampled_at = time.time()
         total = sum(len(v) for v in samples)
-        logger.info("值链接采样完成：%d 列共 %d 个候选值", len(samples), total)
+        logger.info("值链接采样完成：%d 列共 %d 个候选值（跳过 %d 个 DISTINCT>%d 的高基数列）",
+                    len(samples), total, skipped_high_card, _MAX_DISTINCT)
 
     def _connect(self):
         return pymysql.connect(
@@ -145,28 +154,20 @@ class ValueLinker:
     # ------------------------------------------------------------------
     @staticmethod
     def _extract_terms(question: str) -> List[Tuple[str, int, int]]:
-        """从问题中抽取候选实体片段 [(term, start, end)]，只在这些片段内部做匹配：
-        - 引号包裹内容；- 英文专有名词序列（Port Chelsea）；- CJK 连续片段；
-        - 含数字的代码串；- 全大写缩写。
-        排除句首的 What/Which/List 等疑问词。"""
+        """从问题中抽取候选实体片段 [(term, start, end)]，只在这些片段内部做匹配。
+        仅中文/编号场景启用，只抽三类：
+        - 引号包裹内容（用户显式标注，跨语言保留，如 "A102"、"Port Chelsea"）；
+        - 连续中文片段（≥2字）；
+        - 含数字的编号/代码串（订单号、型号等，语言无关）。
+        纯英文自然语言问题抽不到任何片段 → 值链接整体不生效。"""
         found: List[Tuple[str, int, int]] = []
 
         for m in _QUOTED.finditer(question):
             found.append((m.group(1), m.start(1), m.end(1)))
-
-        for m in _PROPER_SEQ.finditer(question):
-            term = m.group(0)
-            if len(term) < 4 or not any(len(tok) >= 3 for tok in term.split()):
-                continue
-            # 句首单独出现的疑问/动词（What/Which/List ...）排除；
-            # 多词专有名词序列（Port Chelsea）保留
-            if m.start() <= 3 and " " not in term and term.lower() in _STOP_STARTERS:
-                continue
-            found.append((term, m.start(), m.end()))
-
-        for pat in (_CJK_RUN, _CODE_RUN, _ABBR_RUN):
-            for m in pat.finditer(question):
-                found.append((m.group(0), m.start(), m.end()))
+        for m in _CJK_RUN.finditer(question):
+            found.append((m.group(0), m.start(), m.end()))
+        for m in _CODE_RUN.finditer(question):
+            found.append((m.group(0), m.start(), m.end()))
 
         # 去重（同一片段只保留一次），长片段优先（保证精确短路先于模糊）
         uniq = {}

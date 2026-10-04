@@ -46,7 +46,8 @@ class SQLGenerator:
                  conversation_context: str = "",
                  reference_context: str = "",
                  selected_schema: str = "",
-                 capability_catalog: str = "") -> GenerationResult:
+                 capability_catalog: str = "",
+                 skill_knowledge: str = "") -> GenerationResult:
         """组装 Prompt 调用 LLM 并提取 SQL；
         query 模式：多轮上下文经 {conversation_context} 紧跟用户问题，
         术语映射/值链接经 {reference_context} 置于表结构之后（模板内固定位置）；
@@ -62,8 +63,11 @@ class SQLGenerator:
                              reference_context: str = "",
                              selected_schema: str = "",
                              capability_catalog: str = "",
+                             skill_knowledge: str = "",
                              schema_context_override: Optional[str] = None) -> List[dict]:
-        """组装 query 模式的初始消息（能力编排器复用此入口，保证单一生成模板）"""
+        """组装 query 模式的初始消息（能力编排器复用此入口，保证单一生成模板）。
+        skill_knowledge 为内联的 SQL 写作专项规则（模型不感知技能形态）；
+        capability_catalog 仅含可调用工具清单。"""
         if schema_context_override is not None:
             schema_context = schema_context_override
         elif selected_schema:
@@ -85,6 +89,7 @@ class SQLGenerator:
             conversation_context=conversation_context,
             reference_context=reference_context,
             capability_catalog=capability_catalog,
+            skill_knowledge=skill_knowledge,
         )
         return [
             {"role": "system", "content": self._system_prompt},
@@ -116,6 +121,7 @@ class SQLGenerator:
                 reference_context=reference_context,
                 selected_schema=selected_schema,
                 capability_catalog=capability_catalog,
+                skill_knowledge=skill_knowledge,
                 schema_context_override=schema_context,
             )
 

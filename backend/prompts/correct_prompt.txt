@@ -11,6 +11,8 @@
 【表结构】
 {schema_context}
 {relation_context}
+【SQL 写作专项指引】（重写后的 SQL 若涉及下列场景，必须逐条遵守对应规则）
+{skill_knowledge}
 {capability_catalog}
 【重写要求】
 1. 针对错误信息修正问题：语法/字段错误改为正确的写法；若错误提示 WHERE 条件值在库中不存在，必须改用错误信息中列出的该列真实取值（选与用户意图最接近的）。
