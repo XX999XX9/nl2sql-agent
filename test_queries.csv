@@ -1,0 +1,683 @@
+id,database,question,sql
+243a8548,battle_death,How many ships ended up being 'Captured'?,SELECT COUNT(*) FROM `ship` WHERE `disposition_of_ship` = 'Captured'
+ab7927fc,battle_death,List the name and tonnage ordered by in descending alphaetical order for the names.,"SELECT `name`, `tonnage` FROM `ship` ORDER BY `name` DESC"
+939be452,battle_death,What is the average number of injuries caused each time?,SELECT AVG(`injured`) FROM `death`
+e26194b0,battle_death,What are the death and injury situations caused by the ship with tonnage 't'?,"SELECT `t1`.`killed`, `t1`.`injured` FROM `death` AS `t1` JOIN `ship` AS `t2` ON `t1`.`caused_by_ship_id` = `t2`.`id` WHERE `t2`.`tonnage` = 't'"
+90b26b17,battle_death,What are the name and results of the battles when the bulgarian commander is not 'Boril',"SELECT `name`, `RESULT` FROM `battle` WHERE `bulgarian_commander` <> 'Boril'"
+8513cd10,battle_death,What are the different ids and names of the battles that lost any 'Brig' type shipes?,"SELECT DISTINCT `t1`.`id`, `t1`.`name` FROM `battle` AS `t1` JOIN `ship` AS `t2` ON `t1`.`id` = `t2`.`lost_in_battle` WHERE `t2`.`ship_type` = 'Brig'"
+6695eae8,battle_death,What are the ids and names of the battles that led to more than 10 people killed in total.,"SELECT `t1`.`id`, `t1`.`name` FROM `battle` AS `t1` JOIN `ship` AS `t2` ON `t1`.`id` = `t2`.`lost_in_battle` JOIN `death` AS `t3` ON `t2`.`id` = `t3`.`caused_by_ship_id` GROUP BY `t1`.`id`, `t1`.`name` HAVING SUM(`t3`.`killed`) > 10"
+8b8b0791,battle_death,How many different results are there for the battles?,SELECT COUNT(DISTINCT `RESULT`) FROM `battle`
+55a4aaab,battle_death,What are the notes of the death events which has substring 'East'?,SELECT `note` FROM `death` WHERE `note` LIKE '%East%'
+d743a7e5,car_1,How many continents are there?,SELECT COUNT(*) FROM `continents`
+f6a1c2ea,car_1,What is the number of continents?,SELECT COUNT(*) FROM `continents`
+f1d6c381,car_1,How many countries are listed?,SELECT COUNT(*) FROM `countries`
+f1bd17ad,car_1,How many countries exist?,SELECT COUNT(*) FROM `countries`
+c07e2766,car_1,"How many models does each car maker produce? List maker full name, id and the number.","SELECT `t1`.`FullName`, `t1`.`Id`, COUNT(*) FROM `car_makers` AS `t1` JOIN `model_list` AS `t2` ON `t1`.`Id` = `t2`.`Maker` GROUP BY `t1`.`FullName`, `t1`.`Id`"
+4fc747b3,car_1,Find the model of the car whose weight is below the average weight.,SELECT `t1`.`model` FROM `car_names` AS `t1` JOIN `cars_data` AS `t2` ON `t1`.`MakeId` = `t2`.`Id` WHERE `t2`.`Weight` < (SELECT AVG(`Weight`) FROM `cars_data`)
+58479d7f,car_1,What is the model for the car with a weight smaller than the average?,SELECT `t1`.`model` FROM `car_names` AS `t1` JOIN `cars_data` AS `t2` ON `t1`.`MakeId` = `t2`.`Id` WHERE `t2`.`Weight` < (SELECT AVG(`Weight`) FROM `cars_data`)
+3895abea,car_1,Find the name of the makers that produced some cars in the year of 1970?,SELECT DISTINCT `t1`.`Maker` FROM `car_makers` AS `t1` JOIN `model_list` AS `t2` ON `t1`.`Id` = `t2`.`Maker` JOIN `car_names` AS `t3` ON `t2`.`model` = `t3`.`model` JOIN `cars_data` AS `t4` ON `t3`.`MakeId` = `t4`.`id` WHERE `t4`.`year` = '1970'
+b2a9d41f,car_1,What is the name of the different car makers who produced a car in 1970?,SELECT DISTINCT `t1`.`Maker` FROM `car_makers` AS `t1` JOIN `model_list` AS `t2` ON `t1`.`Id` = `t2`.`Maker` JOIN `car_names` AS `t3` ON `t2`.`model` = `t3`.`model` JOIN `cars_data` AS `t4` ON `t3`.`MakeId` = `t4`.`id` WHERE `t4`.`year` = '1970'
+d2995d2b,car_1,Find the make and production time of the cars that were produced in the earliest year?,"SELECT `t2`.`Make`, `t1`.`Year` FROM `cars_data` AS `t1` JOIN `car_names` AS `t2` ON `t1`.`Id` = `t2`.`MakeId` WHERE `t1`.`Year` = (SELECT MIN(`YEAR`) FROM `cars_data`)"
+10e1037a,car_1,What is the maker of the carr produced in the earliest year and what year was it?,"SELECT `t2`.`Make`, `t1`.`Year` FROM `cars_data` AS `t1` JOIN `car_names` AS `t2` ON `t1`.`Id` = `t2`.`MakeId` WHERE `t1`.`Year` = (SELECT MIN(`YEAR`) FROM `cars_data`)"
+cf22ba97,car_1,Which distinct car models are the produced after 1980?,SELECT DISTINCT `t1`.`model` FROM `model_list` AS `t1` JOIN `car_names` AS `t2` ON `t1`.`model` = `t2`.`model` JOIN `cars_data` AS `t3` ON `t2`.`MakeId` = `t3`.`id` WHERE `t3`.`year` > 1980
+bad20864,car_1,What are the different models for the cards produced after 1980?,SELECT DISTINCT `t1`.`model` FROM `model_list` AS `t1` JOIN `car_names` AS `t2` ON `t1`.`model` = `t2`.`model` JOIN `cars_data` AS `t3` ON `t2`.`MakeId` = `t3`.`id` WHERE `t3`.`year` > 1980
+d31533ae,car_1,Which of the countries has the most car makers? List the country name.,SELECT `t2`.`CountryName` FROM `car_makers` AS `t1` JOIN `countries` AS `t2` ON `t1`.`Country` = `t2`.`CountryId` GROUP BY `t2`.`CountryName` ORDER BY COUNT(*) DESC LIMIT 1
+49454f8b,car_1,What is the name of the country with the most car makers?,SELECT `t2`.`CountryName` FROM `car_makers` AS `t1` JOIN `countries` AS `t2` ON `t1`.`Country` = `t2`.`CountryId` GROUP BY `t2`.`CountryName` ORDER BY COUNT(*) DESC LIMIT 1
+f39de368,car_1,How many car models are produced by each maker ? Only list the count and the maker full name .,"SELECT COUNT(*), `t2`.`fullname` FROM `model_list` AS `t1` JOIN `car_makers` AS `t2` ON `t1`.`maker` = `t2`.`id` GROUP BY `t2`.`fullname`"
+81843cdc,car_1,What is the number of car models that are produced by each maker and what is the id and full name of each maker?,"SELECT COUNT(*), `t2`.`FullName`, `t2`.`id` FROM `model_list` AS `t1` JOIN `car_makers` AS `t2` ON `t1`.`Maker` = `t2`.`Id` GROUP BY `t2`.`FullName`, `t2`.`id`"
+90cbacfe,car_1,How many car makers are there in france?,SELECT COUNT(*) FROM `car_makers` AS `t1` JOIN `countries` AS `t2` ON `t1`.`Country` = `t2`.`CountryId` WHERE `t2`.`CountryName` = 'france'
+63dfd95f,car_1,What is the average miles per gallon of all the cards with 4 cylinders?,SELECT AVG(`mpg`) FROM `cars_data` WHERE `Cylinders` = 4
+0f2d5cbc,car_1,What is the smallest weight of the car produced with 8 cylinders on 1974 ?,SELECT MIN(`weight`) FROM `cars_data` WHERE `cylinders` = 8 AND `year` = 1974
+7bcbdf69,car_1,What is the minimum weight of the car with 8 cylinders produced in 1974 ?,SELECT MIN(`weight`) FROM `cars_data` WHERE `cylinders` = 8 AND `year` = 1974
+24e8bfa5,car_1,What are the countries having at least one car maker? List name and id.,"SELECT `t1`.`CountryName`, `t1`.`CountryId` FROM `countries` AS `t1` JOIN `car_makers` AS `t2` ON `t1`.`CountryId` = `t2`.`Country` GROUP BY `t1`.`CountryName`, `t1`.`CountryId` HAVING COUNT(*) >= 1"
+dc7db144,car_1,What are the names and ids of all countries with at least one car maker?,"SELECT `t1`.`CountryName`, `t1`.`CountryId` FROM `countries` AS `t1` JOIN `car_makers` AS `t2` ON `t1`.`CountryId` = `t2`.`Country` GROUP BY `t1`.`CountryName`, `t1`.`CountryId` HAVING COUNT(*) >= 1"
+fc70ee30,car_1,What is the average weight of cars each year?,"SELECT AVG(`Weight`), `YEAR` FROM `cars_data` GROUP BY `YEAR`"
+62c10dad,car_1,What is the average weight and year for each year?,"SELECT AVG(`Weight`), `YEAR` FROM `cars_data` GROUP BY `YEAR`"
+558d2007,car_1,Which countries in europe have at least 3 car manufacturers?,SELECT `t1`.`CountryName` FROM `countries` AS `t1` JOIN `continents` AS `t2` ON `t1`.`Continent` = `t2`.`ContId` JOIN `car_makers` AS `t3` ON `t1`.`CountryId` = `t3`.`Country` WHERE `t2`.`Continent` = 'europe' GROUP BY `t1`.`CountryName` HAVING COUNT(*) >= 3
+e7678530,car_1,What is the maximum accelerate for different number of cylinders?,"SELECT MAX(`Accelerate`), `Cylinders` FROM `cars_data` GROUP BY `Cylinders`"
+fa629d72,car_1,What is the maximum accelerate for all the different cylinders?,"SELECT MAX(`Accelerate`), `Cylinders` FROM `cars_data` GROUP BY `Cylinders`"
+3cafa7f2,car_1,Which model has the most version(make) of cars?,SELECT `Model` FROM `car_names` GROUP BY `Model` ORDER BY COUNT(*) DESC LIMIT 1
+ce0d8965,car_1,What model has the most different versions?,SELECT `Model` FROM `car_names` GROUP BY `Model` ORDER BY COUNT(*) DESC LIMIT 1
+6e65eccd,car_1,How many cars have more than 4 cylinders?,SELECT COUNT(*) FROM `cars_data` WHERE `Cylinders` > 4
+3fa1faa1,car_1,What is the number of cars with more than 4 cylinders?,SELECT COUNT(*) FROM `cars_data` WHERE `Cylinders` > 4
+716df04e,car_1,how many cars were produced in 1980?,SELECT COUNT(*) FROM `cars_data` WHERE `YEAR` = 1980
+afeb61a5,car_1,"In 1980, how many cars were made?",SELECT COUNT(*) FROM `cars_data` WHERE `YEAR` = 1980
+c239cc2a,car_1,How many car models were produced by the maker with full name American Motor Company?,SELECT COUNT(*) FROM `car_makers` AS `t1` JOIN `model_list` AS `t2` ON `t1`.`Id` = `t2`.`Maker` WHERE `t1`.`FullName` = 'American Motor Company'
+3d511903,car_1,What is the number of car models created by the car maker American Motor Company?,SELECT COUNT(*) FROM `car_makers` AS `t1` JOIN `model_list` AS `t2` ON `t1`.`Id` = `t2`.`Maker` WHERE `t1`.`FullName` = 'American Motor Company'
+da3b2e31,car_1,Which makers designed more than 3 car models? List full name and the id.,"SELECT `t1`.`FullName`, `t1`.`Id` FROM `car_makers` AS `t1` JOIN `model_list` AS `t2` ON `t1`.`Id` = `t2`.`Maker` GROUP BY `t1`.`FullName`, `t1`.`Id` HAVING COUNT(*) > 3"
+438da3f7,car_1,What are the names and ids of all makers with more than 3 models?,"SELECT `t1`.`FullName`, `t1`.`Id` FROM `car_makers` AS `t1` JOIN `model_list` AS `t2` ON `t1`.`Id` = `t2`.`Maker` GROUP BY `t1`.`FullName`, `t1`.`Id` HAVING COUNT(*) > 3"
+ba8fcd58,car_1,Which distinctive models are produced by maker with the full name General Motors or weighing more than 3500?,SELECT DISTINCT `t2`.`Model` FROM `car_names` AS `t1` JOIN `model_list` AS `t2` ON `t1`.`Model` = `t2`.`Model` JOIN `car_makers` AS `t3` ON `t2`.`Maker` = `t3`.`Id` JOIN `cars_data` AS `t4` ON `t1`.`MakeId` = `t4`.`Id` WHERE `t3`.`FullName` = 'General Motors' OR `t4`.`weight` > 3500
+7465a40d,car_1,In which years cars were produced weighing no less than 3000 and no more than 4000 ?,SELECT DISTINCT `year` FROM `cars_data` WHERE `weight` BETWEEN 3000 AND 4000
+7d0f4544,car_1,What is the horsepower of the car with the largest accelerate?,SELECT `t1`.`horsepower` FROM `cars_data` AS `t1` ORDER BY `t1`.`accelerate` DESC LIMIT 1
+f2b9bb88,car_1,What is the horsepower of the car with the greatest accelerate?,SELECT `t1`.`horsepower` FROM `cars_data` AS `t1` ORDER BY `t1`.`accelerate` DESC LIMIT 1
+982f1ff4,car_1,How many cars has over 6 cylinders?,SELECT COUNT(*) FROM `cars_data` WHERE `Cylinders` > 6
+43b7b79e,car_1,What is the number of carsw ith over 6 cylinders?,SELECT COUNT(*) FROM `cars_data` WHERE `Cylinders` > 6
+15002695,car_1,Which models are lighter than 3500 but not built by the 'Ford Motor Company'?,SELECT DISTINCT `t1`.`model` FROM `model_list` AS `t1` JOIN `car_names` AS `t2` ON `t1`.`Model` = `t2`.`Model` JOIN `cars_data` AS `t3` ON `t2`.`MakeId` = `t3`.`Id` JOIN `car_makers` AS `t4` ON `t1`.`Maker` = `t4`.`Id` WHERE `t3`.`weight` < 3500 AND `t4`.`FullName` <> 'Ford Motor Company'
+a4c02e0d,car_1,What are the different models wthat are lighter than 3500 but were not built by the Ford Motor Company?,SELECT DISTINCT `t1`.`model` FROM `model_list` AS `t1` JOIN `car_names` AS `t2` ON `t1`.`Model` = `t2`.`Model` JOIN `cars_data` AS `t3` ON `t2`.`MakeId` = `t3`.`Id` JOIN `car_makers` AS `t4` ON `t1`.`Maker` = `t4`.`Id` WHERE `t3`.`weight` < 3500 AND `t4`.`FullName` <> 'Ford Motor Company'
+49585e9e,concert_singer,How many singers do we have?,SELECT COUNT(*) FROM `singer`
+9d949b96,concert_singer,What is the total number of singers?,SELECT COUNT(*) FROM `singer`
+fda08af1,concert_singer,"Show name, country, age for all singers ordered by age from the oldest to the youngest.","SELECT `name`, `country`, `age` FROM `singer` ORDER BY `age` DESC"
+de66b47d,concert_singer,"What are the names, countries, and ages for every singer in descending order of age?","SELECT `name`, `country`, `age` FROM `singer` ORDER BY `age` DESC"
+b05e2c21,concert_singer,"What is the average, minimum, and maximum age of all singers from France?","SELECT AVG(`age`), MIN(`age`), MAX(`age`) FROM `singer` WHERE `country` = 'France'"
+d5a1683a,concert_singer,"What is the average, minimum, and maximum age for all French singers?","SELECT AVG(`age`), MIN(`age`), MAX(`age`) FROM `singer` WHERE `country` = 'France'"
+0a7b3b1c,concert_singer,Show the name and the release year of the song by the youngest singer.,"SELECT `song_name`, `song_release_year` FROM `singer` ORDER BY `age` LIMIT 1"
+235a9fec,concert_singer,What are all distinct countries where singers above age 20 are from?,SELECT DISTINCT `country` FROM `singer` WHERE `age` > 20
+32d5cbdd,concert_singer,What are  the different countries with singers above age 20?,SELECT DISTINCT `country` FROM `singer` WHERE `age` > 20
+e80ac507,concert_singer,Show all countries and the number of singers in each country.,"SELECT `country`, COUNT(*) FROM `singer` GROUP BY `country`"
+2fa27f5e,concert_singer,How many singers are from each country?,"SELECT `country`, COUNT(*) FROM `singer` GROUP BY `country`"
+d0880ab8,concert_singer,List all song names by singers above the average age.,SELECT `song_name` FROM `singer` WHERE `age` > (SELECT AVG(`age`) FROM `singer`)
+322789b4,concert_singer,What are all the song names by singers who are older than average?,SELECT `song_name` FROM `singer` WHERE `age` > (SELECT AVG(`age`) FROM `singer`)
+380c6301,concert_singer,Show location and name for all stadiums with a capacity between 5000 and 10000.,"SELECT `LOCATION`, `name` FROM `stadium` WHERE `capacity` BETWEEN 5000 AND 10000"
+9daa60e7,concert_singer,What are the locations and names of all stations with capacity between 5000 and 10000?,"SELECT `LOCATION`, `name` FROM `stadium` WHERE `capacity` BETWEEN 5000 AND 10000"
+80aec372,concert_singer,What is the average and maximum capacities for all stadiums ?,"SELECT AVG(`capacity`), MAX(`capacity`) FROM `stadium`"
+822754c8,concert_singer,What is the name and capacity for the stadium with highest average attendance?,"SELECT `name`, `capacity` FROM `stadium` ORDER BY `average` DESC LIMIT 1"
+95ba15c2,concert_singer,What is the name and capacity for the stadium with the highest average attendance?,"SELECT `name`, `capacity` FROM `stadium` ORDER BY `average` DESC LIMIT 1"
+b6f46de8,concert_singer,How many concerts occurred in 2014 or 2015?,SELECT COUNT(*) FROM `concert` WHERE `YEAR` = 2014 OR `YEAR` = 2015
+25d61e46,concert_singer,Show the stadium name and capacity with most number of concerts in year 2014 or after.,"SELECT `t2`.`name`, `t2`.`capacity` FROM `concert` AS `t1` JOIN `stadium` AS `t2` ON `t1`.`stadium_id` = `t2`.`stadium_id` WHERE `t1`.`year` >= 2014 GROUP BY `t2`.`name`, `t2`.`capacity` ORDER BY COUNT(*) DESC LIMIT 1"
+7c623d3a,concert_singer,What is the name and capacity of the stadium with the most concerts after 2013 ?,"SELECT `t2`.`name`, `t2`.`capacity` FROM `concert` AS `t1` JOIN `stadium` AS `t2` ON `t1`.`stadium_id` = `t2`.`stadium_id` WHERE `t1`.`year` > 2013 GROUP BY `t2`.`name`, `t2`.`capacity` ORDER BY COUNT(*) DESC LIMIT 1"
+0969aaea,concert_singer,Which year has most number of concerts?,SELECT `YEAR` FROM `concert` GROUP BY `YEAR` ORDER BY COUNT(*) DESC LIMIT 1
+89c9b37d,concert_singer,What is the year that had the most concerts?,SELECT `YEAR` FROM `concert` GROUP BY `YEAR` ORDER BY COUNT(*) DESC LIMIT 1
+c0b60e5a,concert_singer,List all singer names in concerts in year 2014.,SELECT `t2`.`name` FROM `singer_in_concert` AS `t1` JOIN `singer` AS `t2` ON `t1`.`singer_id` = `t2`.`singer_id` JOIN `concert` AS `t3` ON `t1`.`concert_id` = `t3`.`concert_id` WHERE `t3`.`year` = 2014
+c4ddcf4d,concert_singer,what is the name and nation of the singer who have a song having 'Hey' in its name?,"SELECT `name`, `country` FROM `singer` WHERE `song_name` LIKE '%Hey%'"
+e8b9ed34,concert_singer,What is the name and country of origin of every singer who has a song with the word 'Hey' in its title?,"SELECT `name`, `country` FROM `singer` WHERE `song_name` LIKE '%Hey%'"
+86462d1a,course_teach,How many teachers are there?,SELECT COUNT(*) FROM `teacher`
+6d2e65e6,course_teach,What is the total count of teachers?,SELECT COUNT(*) FROM `teacher`
+715d2958,course_teach,What are the age and hometown of teachers?,"SELECT `Age`, `Hometown` FROM `teacher`"
+3031568d,course_teach,What is the age and hometown of every teacher?,"SELECT `Age`, `Hometown` FROM `teacher`"
+4401539e,course_teach,What are the names of the teachers whose hometown is not `` Little Lever Urban District '' ?,SELECT `name` FROM `teacher` WHERE `hometown` <> 'little lever urban district'
+82fd07b7,course_teach,Show different hometown of teachers and the number of teachers from each hometown.,"SELECT `Hometown`, COUNT(*) FROM `teacher` GROUP BY `Hometown`"
+155d842e,course_teach,"For each hometown, how many teachers are there?","SELECT `Hometown`, COUNT(*) FROM `teacher` GROUP BY `Hometown`"
+96085695,course_teach,List the most common hometown of teachers.,SELECT `Hometown` FROM `teacher` GROUP BY `Hometown` ORDER BY COUNT(*) DESC LIMIT 1
+497b78f5,course_teach,What is the most commmon hometowns for teachers?,SELECT `Hometown` FROM `teacher` GROUP BY `Hometown` ORDER BY COUNT(*) DESC LIMIT 1
+5157fa22,course_teach,Show the hometowns shared by at least two teachers.,SELECT `Hometown` FROM `teacher` GROUP BY `Hometown` HAVING COUNT(*) >= 2
+0d544931,course_teach,What are the towns from which at least two teachers come from?,SELECT `Hometown` FROM `teacher` GROUP BY `Hometown` HAVING COUNT(*) >= 2
+8ff30dde,course_teach,Show names of teachers and the courses they are arranged to teach.,"SELECT `t3`.`Name`, `t2`.`Course` FROM `course_arrange` AS `t1` JOIN `course` AS `t2` ON `t1`.`Course_ID` = `t2`.`Course_ID` JOIN `teacher` AS `t3` ON `t1`.`Teacher_ID` = `t3`.`Teacher_ID`"
+c1c21e0d,course_teach,What is the name of each teacher and what course they teach?,"SELECT `t3`.`Name`, `t2`.`Course` FROM `course_arrange` AS `t1` JOIN `course` AS `t2` ON `t1`.`Course_ID` = `t2`.`Course_ID` JOIN `teacher` AS `t3` ON `t1`.`Teacher_ID` = `t3`.`Teacher_ID`"
+de3de362,course_teach,Show names of teachers and the courses they are arranged to teach in ascending alphabetical order of the teacher's name.,"SELECT `t3`.`Name`, `t2`.`Course` FROM `course_arrange` AS `t1` JOIN `course` AS `t2` ON `t1`.`Course_ID` = `t2`.`Course_ID` JOIN `teacher` AS `t3` ON `t1`.`Teacher_ID` = `t3`.`Teacher_ID` ORDER BY `t3`.`Name`"
+ba7d6dfa,course_teach,Show the name of the teacher for the math course.,SELECT `t3`.`Name` FROM `course_arrange` AS `t1` JOIN `course` AS `t2` ON `t1`.`Course_ID` = `t2`.`Course_ID` JOIN `teacher` AS `t3` ON `t1`.`Teacher_ID` = `t3`.`Teacher_ID` WHERE `t2`.`Course` = 'Math'
+5cbfb531,course_teach,What are the names of the people who teach math courses?,SELECT `t3`.`Name` FROM `course_arrange` AS `t1` JOIN `course` AS `t2` ON `t1`.`Course_ID` = `t2`.`Course_ID` JOIN `teacher` AS `t3` ON `t1`.`Teacher_ID` = `t3`.`Teacher_ID` WHERE `t2`.`Course` = 'Math'
+4775032f,course_teach,List the names of teachers who have not been arranged to teach courses.,SELECT `Name` FROM `teacher` WHERE NOT `Teacher_id` IN (SELECT `Teacher_id` FROM `course_arrange`)
+7b1f96d8,course_teach,What are the names of the teachers whose courses have not been arranged?,SELECT `Name` FROM `teacher` WHERE NOT `Teacher_id` IN (SELECT `Teacher_id` FROM `course_arrange`)
+5eaffb58,cre_Doc_Template_Mgt,How many documents do we have?,SELECT COUNT(*) FROM `Documents`
+f275ac03,cre_Doc_Template_Mgt,Count the number of documents.,SELECT COUNT(*) FROM `Documents`
+ee2436d2,cre_Doc_Template_Mgt,"List document IDs, document names, and document descriptions for all documents.","SELECT `document_id`, `document_name`, `document_description` FROM `Documents`"
+b55508d0,cre_Doc_Template_Mgt,"What are the ids, names, and descriptions for all documents?","SELECT `document_id`, `document_name`, `document_description` FROM `Documents`"
+54d85837,cre_Doc_Template_Mgt,What is the document name and template id for document with description with the letter 'w' in it?,"SELECT `document_name`, `template_id` FROM `Documents` WHERE `Document_Description` LIKE '%w%'"
+bccf5cdc,cre_Doc_Template_Mgt,Return the names and template ids for documents that contain the letter w in their description.,"SELECT `document_name`, `template_id` FROM `Documents` WHERE `Document_Description` LIKE '%w%'"
+1329ecd8,cre_Doc_Template_Mgt,"What is the document id, template id and description for document named ""Robbin CV""?","SELECT `document_id`, `template_id`, `Document_Description` FROM `Documents` WHERE `document_name` = 'Robbin CV'"
+6a33a08b,cre_Doc_Template_Mgt,"Return the document id, template id, and description for the document with the name Robbin CV.","SELECT `document_id`, `template_id`, `Document_Description` FROM `Documents` WHERE `document_name` = 'Robbin CV'"
+5cea559e,cre_Doc_Template_Mgt,How many different templates do all document use?,SELECT COUNT(DISTINCT `template_id`) FROM `Documents`
+0b471e44,cre_Doc_Template_Mgt,Count the number of different templates used for documents.,SELECT COUNT(DISTINCT `template_id`) FROM `Documents`
+ea2b9201,cre_Doc_Template_Mgt,How many documents are using the template with type code 'PPT'?,SELECT COUNT(*) FROM `Documents` AS `t1` JOIN `Templates` AS `t2` ON `t1`.`Template_ID` = `t2`.`Template_ID` WHERE `t2`.`Template_Type_Code` = 'PPT'
+510ca3b8,cre_Doc_Template_Mgt,Count the number of documents that use the PPT template type.,SELECT COUNT(*) FROM `Documents` AS `t1` JOIN `Templates` AS `t2` ON `t1`.`Template_ID` = `t2`.`Template_ID` WHERE `t2`.`Template_Type_Code` = 'PPT'
+4fc68b09,cre_Doc_Template_Mgt,What is the id and type code for the template used by the most documents?,"SELECT `t1`.`template_id`, `t2`.`Template_Type_Code` FROM `Documents` AS `t1` JOIN `Templates` AS `t2` ON `t1`.`template_id` = `t2`.`template_id` GROUP BY `t1`.`template_id`, `t2`.`Template_Type_Code` ORDER BY COUNT(*) DESC LIMIT 1"
+6bd93d1c,cre_Doc_Template_Mgt,Return the id and type code of the template that is used for the greatest number of documents.,"SELECT `t1`.`template_id`, `t2`.`Template_Type_Code` FROM `Documents` AS `t1` JOIN `Templates` AS `t2` ON `t1`.`template_id` = `t2`.`template_id` GROUP BY `t1`.`template_id`, `t2`.`Template_Type_Code` ORDER BY COUNT(*) DESC LIMIT 1"
+77bfc8fa,cre_Doc_Template_Mgt,How many templates do we have?,SELECT COUNT(*) FROM `Templates`
+d091ff14,cre_Doc_Template_Mgt,Count the number of templates.,SELECT COUNT(*) FROM `Templates`
+fe2d2195,cre_Doc_Template_Mgt,"Show template ids, version numbers, and template type codes for all templates.","SELECT `template_id`, `version_number`, `template_type_code` FROM `Templates`"
+276db126,cre_Doc_Template_Mgt,"What are the ids, version numbers, and type codes for each template?","SELECT `template_id`, `version_number`, `template_type_code` FROM `Templates`"
+adf3ec09,cre_Doc_Template_Mgt,Show all distinct template type codes for all templates.,SELECT DISTINCT `template_type_code` FROM `Templates`
+34e1c321,cre_Doc_Template_Mgt,What are the ids of templates with template type code PP or PPT?,SELECT `template_id` FROM `Templates` WHERE `template_type_code` = 'PP' OR `template_type_code` = 'PPT'
+9cf53bc5,cre_Doc_Template_Mgt,Return the ids of templates that have the code PP or PPT.,SELECT `template_id` FROM `Templates` WHERE `template_type_code` = 'PP' OR `template_type_code` = 'PPT'
+975df568,cre_Doc_Template_Mgt,How many templates have template type code CV?,SELECT COUNT(*) FROM `Templates` WHERE `template_type_code` = 'CV'
+693424e6,cre_Doc_Template_Mgt,Count the number of templates of the type CV.,SELECT COUNT(*) FROM `Templates` WHERE `template_type_code` = 'CV'
+09ce8616,cre_Doc_Template_Mgt,What is the version number and template type code for the template with version number later than 5?,"SELECT `version_number`, `template_type_code` FROM `Templates` WHERE `version_number` > 5"
+f24f9665,cre_Doc_Template_Mgt,Return the version numbers and template type codes of templates with a version number greater than 5.,"SELECT `version_number`, `template_type_code` FROM `Templates` WHERE `version_number` > 5"
+14f39660,cre_Doc_Template_Mgt,"What are the different template type codes, and how many templates correspond to each?","SELECT `template_type_code`, COUNT(*) FROM `Templates` GROUP BY `template_type_code`"
+ef81afc2,cre_Doc_Template_Mgt,Which template type code has most number of templates?,SELECT `template_type_code` FROM `Templates` GROUP BY `template_type_code` ORDER BY COUNT(*) DESC LIMIT 1
+a1ea31b0,cre_Doc_Template_Mgt,Return the type code of the template type that the most templates belong to.,SELECT `template_type_code` FROM `Templates` GROUP BY `template_type_code` ORDER BY COUNT(*) DESC LIMIT 1
+0420fe8d,cre_Doc_Template_Mgt,"What is the template type code of the template used by document with the name ""Data base""?",SELECT `t1`.`template_type_code` FROM `Templates` AS `t1` JOIN `Documents` AS `t2` ON `t1`.`template_id` = `t2`.`template_id` WHERE `t2`.`document_name` = 'Data base'
+40e40628,cre_Doc_Template_Mgt,Return the template type code of the template that is used by a document named Data base.,SELECT `t1`.`template_type_code` FROM `Templates` AS `t1` JOIN `Documents` AS `t2` ON `t1`.`template_id` = `t2`.`template_id` WHERE `t2`.`document_name` = 'Data base'
+9f35b3fd,cre_Doc_Template_Mgt,Show all document names using templates with template type code BK.,SELECT `t2`.`document_name` FROM `Templates` AS `t1` JOIN `Documents` AS `t2` ON `t1`.`template_id` = `t2`.`template_id` WHERE `t1`.`template_type_code` = 'BK'
+c3854aaf,cre_Doc_Template_Mgt,What are the names of documents that use templates with the code BK?,SELECT `t2`.`document_name` FROM `Templates` AS `t1` JOIN `Documents` AS `t2` ON `t1`.`template_id` = `t2`.`template_id` WHERE `t1`.`template_type_code` = 'BK'
+81ef1c1f,cre_Doc_Template_Mgt,"What are the different template type codes, and how many documents use each type?","SELECT `t1`.`template_type_code`, COUNT(*) FROM `Templates` AS `t1` JOIN `Documents` AS `t2` ON `t1`.`template_id` = `t2`.`template_id` GROUP BY `t1`.`template_type_code`"
+31cb1d20,cre_Doc_Template_Mgt,Which template type code is used by most number of documents?,SELECT `t1`.`template_type_code` FROM `Templates` AS `t1` JOIN `Documents` AS `t2` ON `t1`.`template_id` = `t2`.`template_id` GROUP BY `t1`.`template_type_code` ORDER BY COUNT(*) DESC LIMIT 1
+4bd72a66,cre_Doc_Template_Mgt,Return the code of the template type that is most commonly used in documents.,SELECT `t1`.`template_type_code` FROM `Templates` AS `t1` JOIN `Documents` AS `t2` ON `t1`.`template_id` = `t2`.`template_id` GROUP BY `t1`.`template_type_code` ORDER BY COUNT(*) DESC LIMIT 1
+d2367244,cre_Doc_Template_Mgt,Show all template type codes and descriptions.,"SELECT `template_type_code`, `template_type_description` FROM `Ref_Template_Types`"
+f64be4c1,cre_Doc_Template_Mgt,What are the type codes and descriptions for all template types?,"SELECT `template_type_code`, `template_type_description` FROM `Ref_Template_Types`"
+9db6461b,cre_Doc_Template_Mgt,"What is the template type descriptions for template type code ""AD"".",SELECT `template_type_description` FROM `Ref_Template_Types` WHERE `template_type_code` = 'AD'
+49a04532,cre_Doc_Template_Mgt,Return the template type description of the template type with the code AD.,SELECT `template_type_description` FROM `Ref_Template_Types` WHERE `template_type_code` = 'AD'
+08906231,cre_Doc_Template_Mgt,"What is the template type code for template type description ""Book"".",SELECT `template_type_code` FROM `Ref_Template_Types` WHERE `template_type_description` = 'Book'
+49c85121,cre_Doc_Template_Mgt,"Return the type code of the template type with the description ""Book"".",SELECT `template_type_code` FROM `Ref_Template_Types` WHERE `template_type_description` = 'Book'
+04dbedee,cre_Doc_Template_Mgt,What are the distinct template type descriptions for the templates ever used by any document?,SELECT DISTINCT `t1`.`template_type_description` FROM `Ref_Template_Types` AS `t1` JOIN `Templates` AS `t2` ON `t1`.`template_type_code` = `t2`.`template_type_code` JOIN `Documents` AS `t3` ON `t2`.`Template_ID` = `t3`.`template_ID`
+bb1ab115,cre_Doc_Template_Mgt,"What are the template ids with template type description ""Presentation"".",SELECT `t2`.`template_id` FROM `Ref_Template_Types` AS `t1` JOIN `Templates` AS `t2` ON `t1`.`template_type_code` = `t2`.`template_type_code` WHERE `t1`.`template_type_description` = 'Presentation'
+62de7681,cre_Doc_Template_Mgt,How many paragraphs in total?,SELECT COUNT(*) FROM `Paragraphs`
+20e46375,cre_Doc_Template_Mgt,Count the number of paragraphs.,SELECT COUNT(*) FROM `Paragraphs`
+fc8a6aa8,cre_Doc_Template_Mgt,How many paragraphs for the document with name 'Summer Show'?,SELECT COUNT(*) FROM `Paragraphs` AS `t1` JOIN `Documents` AS `t2` ON `t1`.`document_ID` = `t2`.`document_ID` WHERE `t2`.`document_name` = 'Summer Show'
+4d81342d,cre_Doc_Template_Mgt,Count the number of paragraphs in the document named 'Summer Show'.,SELECT COUNT(*) FROM `Paragraphs` AS `t1` JOIN `Documents` AS `t2` ON `t1`.`document_ID` = `t2`.`document_ID` WHERE `t2`.`document_name` = 'Summer Show'
+d3b3088e,cre_Doc_Template_Mgt,Show all paragraph ids and texts for the document with name 'Welcome to NY'.,"SELECT `t1`.`paragraph_id`, `t1`.`paragraph_text` FROM `Paragraphs` AS `t1` JOIN `Documents` AS `t2` ON `t1`.`document_id` = `t2`.`document_id` WHERE `t2`.`Document_Name` = 'Welcome to NY'"
+8601348e,cre_Doc_Template_Mgt,What are the ids and texts of paragraphs in the document titled 'Welcome to NY'?,"SELECT `t1`.`paragraph_id`, `t1`.`paragraph_text` FROM `Paragraphs` AS `t1` JOIN `Documents` AS `t2` ON `t1`.`document_id` = `t2`.`document_id` WHERE `t2`.`Document_Name` = 'Welcome to NY'"
+918a3472,cre_Doc_Template_Mgt,"Show all paragraph texts for the document ""Customer reviews"".",SELECT `t1`.`paragraph_text` FROM `Paragraphs` AS `t1` JOIN `Documents` AS `t2` ON `t1`.`document_id` = `t2`.`document_id` WHERE `t2`.`document_name` = 'Customer reviews'
+6bafc91a,cre_Doc_Template_Mgt,What are the paragraph texts for the document with the name 'Customer reviews'?,SELECT `t1`.`paragraph_text` FROM `Paragraphs` AS `t1` JOIN `Documents` AS `t2` ON `t1`.`document_id` = `t2`.`document_id` WHERE `t2`.`document_name` = 'Customer reviews'
+5f06c74b,cre_Doc_Template_Mgt,"Return the different document ids along with the number of paragraphs corresponding to each, ordered by id.","SELECT `document_id`, COUNT(*) FROM `Paragraphs` GROUP BY `document_id` ORDER BY `document_id`"
+7206d13e,cre_Doc_Template_Mgt,List all document ids with at least two paragraphs.,SELECT `document_id` FROM `Paragraphs` GROUP BY `document_id` HAVING COUNT(*) >= 2
+4a52b567,cre_Doc_Template_Mgt,What are the ids of documents that have 2 or more paragraphs?,SELECT `document_id` FROM `Paragraphs` GROUP BY `document_id` HAVING COUNT(*) >= 2
+545e49e0,cre_Doc_Template_Mgt,What is the document id and name with greatest number of paragraphs?,"SELECT `t1`.`document_id`, `t2`.`document_name` FROM `Paragraphs` AS `t1` JOIN `Documents` AS `t2` ON `t1`.`document_id` = `t2`.`document_id` GROUP BY `t1`.`document_id`, `t2`.`document_name` ORDER BY COUNT(*) DESC LIMIT 1"
+41bd6de0,cre_Doc_Template_Mgt,Return the id and name of the document with the most paragraphs.,"SELECT `t1`.`document_id`, `t2`.`document_name` FROM `Paragraphs` AS `t1` JOIN `Documents` AS `t2` ON `t1`.`document_id` = `t2`.`document_id` GROUP BY `t1`.`document_id`, `t2`.`document_name` ORDER BY COUNT(*) DESC LIMIT 1"
+a3d65d62,cre_Doc_Template_Mgt,What is the document id with 1 to 2 paragraphs?,SELECT `document_id` FROM `Paragraphs` GROUP BY `document_id` HAVING COUNT(*) BETWEEN 1 AND 2
+2cf25542,cre_Doc_Template_Mgt,Give the ids of documents that have between one and two paragraphs.,SELECT `document_id` FROM `Paragraphs` GROUP BY `document_id` HAVING COUNT(*) BETWEEN 1 AND 2
+70ca9586,dog_kennels,"Which professionals live in the state of Indiana or have done treatment on more than 2 treatments? List his or her id, last name and cell phone.","SELECT `professional_id`, `last_name`, `cell_number` FROM `Professionals` WHERE `state` = 'Indiana' UNION SELECT `t1`.`professional_id`, `t1`.`last_name`, `t1`.`cell_number` FROM `Professionals` AS `t1` JOIN `Treatments` AS `t2` ON `t1`.`professional_id` = `t2`.`professional_id` GROUP BY `t1`.`professional_id`, `t1`.`last_name`, `t1`.`cell_number` HAVING COUNT(*) > 2"
+edf6df69,dog_kennels,"Find the id, last name and cell phone of the professionals who live in the state of Indiana or have performed more than two treatments.","SELECT `professional_id`, `last_name`, `cell_number` FROM `Professionals` WHERE `state` = 'Indiana' UNION SELECT `t1`.`professional_id`, `t1`.`last_name`, `t1`.`cell_number` FROM `Professionals` AS `t1` JOIN `Treatments` AS `t2` ON `t1`.`professional_id` = `t2`.`professional_id` GROUP BY `t1`.`professional_id`, `t1`.`last_name`, `t1`.`cell_number` HAVING COUNT(*) > 2"
+bdcfd3b4,dog_kennels,Which dogs have not cost their owner more than 1000 for treatment ? List the dog names .,SELECT `name` FROM `Dogs` WHERE NOT `dog_id` IN (SELECT `dog_id` FROM `Treatments` GROUP BY `dog_id` HAVING SUM(`cost_of_treatment`) > 1000) GROUP BY `name`
+06801f22,dog_kennels,"Which owner owns the most dogs? List the owner id, first name and last name.","SELECT `t1`.`owner_id`, `t2`.`first_name`, `t2`.`last_name` FROM `Dogs` AS `t1` JOIN `Owners` AS `t2` ON `t1`.`owner_id` = `t2`.`owner_id` GROUP BY `t1`.`owner_id`, `t2`.`first_name`, `t2`.`last_name` ORDER BY COUNT(*) DESC LIMIT 1"
+710fb94c,dog_kennels,"Return the owner id, first name and last name of the owner who has the most dogs.","SELECT `t1`.`owner_id`, `t2`.`first_name`, `t2`.`last_name` FROM `Dogs` AS `t1` JOIN `Owners` AS `t2` ON `t1`.`owner_id` = `t2`.`owner_id` GROUP BY `t1`.`owner_id`, `t2`.`first_name`, `t2`.`last_name` ORDER BY COUNT(*) DESC LIMIT 1"
+3ae84df2,dog_kennels,"Which professionals have done at least two treatments? List the professional's id, role, and first name.","SELECT `t1`.`professional_id`, `t1`.`role_code`, `t1`.`first_name` FROM `Professionals` AS `t1` JOIN `Treatments` AS `t2` ON `t1`.`professional_id` = `t2`.`professional_id` GROUP BY `t1`.`professional_id`, `t1`.`role_code`, `t1`.`first_name` HAVING COUNT(*) >= 2"
+2ad987b3,dog_kennels,"What are the id, role, and first name of the professionals who have performed two or more treatments?","SELECT `t1`.`professional_id`, `t1`.`role_code`, `t1`.`first_name` FROM `Professionals` AS `t1` JOIN `Treatments` AS `t2` ON `t1`.`professional_id` = `t2`.`professional_id` GROUP BY `t1`.`professional_id`, `t1`.`role_code`, `t1`.`first_name` HAVING COUNT(*) >= 2"
+240f5ea6,dog_kennels,What is the name of the breed with the most dogs?,SELECT `t1`.`breed_name` FROM `Breeds` AS `t1` JOIN `Dogs` AS `t2` ON `t1`.`breed_code` = `t2`.`breed_code` GROUP BY `t1`.`breed_name` ORDER BY COUNT(*) DESC LIMIT 1
+6e80817d,dog_kennels,Which breed do the most dogs have? Give me the breed name.,SELECT `t1`.`breed_name` FROM `Breeds` AS `t1` JOIN `Dogs` AS `t2` ON `t1`.`breed_code` = `t2`.`breed_code` GROUP BY `t1`.`breed_name` ORDER BY COUNT(*) DESC LIMIT 1
+90909bbd,dog_kennels,Which owner has paid for the most treatments on his or her dogs? List the owner id and last name.,"SELECT `t1`.`owner_id`, `t1`.`last_name` FROM `Owners` AS `t1` JOIN `Dogs` AS `t2` ON `t1`.`owner_id` = `t2`.`owner_id` JOIN `Treatments` AS `t3` ON `t2`.`dog_id` = `t3`.`dog_id` GROUP BY `t1`.`owner_id`, `t1`.`last_name` ORDER BY COUNT(*) DESC LIMIT 1"
+b7aba8f1,dog_kennels,What is the description of the treatment type that costs the least money in total?,SELECT `t1`.`treatment_type_description` FROM `Treatment_Types` AS `t1` JOIN `Treatments` AS `t2` ON `t1`.`treatment_type_code` = `t2`.`treatment_type_code` GROUP BY `t1`.`treatment_type_description` ORDER BY SUM(`cost_of_treatment`) ASC LIMIT 1
+0064bb47,dog_kennels,Which owner has paid the largest amount of money in total for their dogs? Show the owner id and zip code.,"SELECT `t1`.`owner_id`, `t1`.`zip_code` FROM `Owners` AS `t1` JOIN `Dogs` AS `t2` ON `t1`.`owner_id` = `t2`.`owner_id` JOIN `Treatments` AS `t3` ON `t2`.`dog_id` = `t3`.`dog_id` GROUP BY `t1`.`owner_id`, `t1`.`zip_code` ORDER BY SUM(`t3`.`cost_of_treatment`) DESC LIMIT 1"
+448feb82,dog_kennels,Find the owner id and zip code of the owner who spent the most money in total for his or her dogs.,"SELECT `t1`.`owner_id`, `t1`.`zip_code` FROM `Owners` AS `t1` JOIN `Dogs` AS `t2` ON `t1`.`owner_id` = `t2`.`owner_id` JOIN `Treatments` AS `t3` ON `t2`.`dog_id` = `t3`.`dog_id` GROUP BY `t1`.`owner_id`, `t1`.`zip_code` ORDER BY SUM(`t3`.`cost_of_treatment`) DESC LIMIT 1"
+cb536ea3,dog_kennels,"List the date of each treatment, together with the first name of the professional who operated it.","SELECT `t1`.`date_of_treatment`, `t2`.`first_name` FROM `Treatments` AS `t1` JOIN `Professionals` AS `t2` ON `t1`.`professional_id` = `t2`.`professional_id`"
+0ae643d2,dog_kennels,What are the date and the operating professional's first name of each treatment?,"SELECT `t1`.`date_of_treatment`, `t2`.`first_name` FROM `Treatments` AS `t1` JOIN `Professionals` AS `t2` ON `t1`.`professional_id` = `t2`.`professional_id`"
+5aca8c42,dog_kennels,List the cost of each treatment and the corresponding treatment type description.,"SELECT `t1`.`cost_of_treatment`, `t2`.`treatment_type_description` FROM `Treatments` AS `t1` JOIN `Treatment_Types` AS `t2` ON `t1`.`treatment_type_code` = `t2`.`treatment_type_code`"
+dddb5bd3,dog_kennels,What are the cost and treatment type description of each treatment?,"SELECT `t1`.`cost_of_treatment`, `t2`.`treatment_type_description` FROM `Treatments` AS `t1` JOIN `Treatment_Types` AS `t2` ON `t1`.`treatment_type_code` = `t2`.`treatment_type_code`"
+7ae5f4fa,dog_kennels,List pairs of the owner's first name and the dogs's name.,"SELECT `t1`.`first_name`, `t2`.`name` FROM `Owners` AS `t1` JOIN `Dogs` AS `t2` ON `t1`.`owner_id` = `t2`.`owner_id`"
+5239c600,dog_kennels,What are each owner's first name and their dogs's name?,"SELECT `t1`.`first_name`, `t2`.`name` FROM `Owners` AS `t1` JOIN `Dogs` AS `t2` ON `t1`.`owner_id` = `t2`.`owner_id`"
+4ad2173a,dog_kennels,Which dogs are owned by someone who lives in Virginia? List the owner's first name and the dog's name.,"SELECT `t1`.`first_name`, `t2`.`name` FROM `Owners` AS `t1` JOIN `Dogs` AS `t2` ON `t1`.`owner_id` = `t2`.`owner_id` WHERE `t1`.`state` = 'Virginia'"
+0a429b95,dog_kennels,Find the first names of owners living in Virginia and the names of dogs they own.,"SELECT `t1`.`first_name`, `t2`.`name` FROM `Owners` AS `t1` JOIN `Dogs` AS `t2` ON `t1`.`owner_id` = `t2`.`owner_id` WHERE `t1`.`state` = 'Virginia'"
+db123e5d,dog_kennels,What are the arriving date and the departing date of the dogs who have gone through a treatment?,"SELECT DISTINCT `t1`.`date_arrived`, `t1`.`date_departed` FROM `Dogs` AS `t1` JOIN `Treatments` AS `t2` ON `t1`.`dog_id` = `t2`.`dog_id`"
+9e2d736f,dog_kennels,Find the arriving date and the departing date of the dogs that received a treatment.,"SELECT DISTINCT `t1`.`date_arrived`, `t1`.`date_departed` FROM `Dogs` AS `t1` JOIN `Treatments` AS `t2` ON `t1`.`dog_id` = `t2`.`dog_id`"
+e5e61ad1,dog_kennels,List the emails of the professionals who live in the state of Hawaii or the state of Wisconsin.,SELECT `email_address` FROM `Professionals` WHERE `state` = 'Hawaii' OR `state` = 'Wisconsin'
+43bafefe,dog_kennels,What are the emails of the professionals living in either the state of Hawaii or the state of Wisconsin?,SELECT `email_address` FROM `Professionals` WHERE `state` = 'Hawaii' OR `state` = 'Wisconsin'
+849c8fa1,dog_kennels,What are the arriving date and the departing date of all the dogs?,"SELECT `date_arrived`, `date_departed` FROM `Dogs`"
+3f71634c,dog_kennels,List the arrival date and the departure date for all the dogs.,"SELECT `date_arrived`, `date_departed` FROM `Dogs`"
+58a11d28,dog_kennels,How many dogs went through any treatments?,SELECT COUNT(DISTINCT `dog_id`) FROM `Treatments`
+66b07c6b,dog_kennels,Count the number of dogs that went through a treatment.,SELECT COUNT(DISTINCT `dog_id`) FROM `Treatments`
+09807f8d,dog_kennels,How many professionals have performed any treatment to dogs?,SELECT COUNT(DISTINCT `professional_id`) FROM `Treatments`
+70fa3e24,dog_kennels,Find the number of professionals who have ever treated dogs.,SELECT COUNT(DISTINCT `professional_id`) FROM `Treatments`
+45dd1795,dog_kennels,"Which professionals live in a city containing the substring 'West'? List his or her role, street, city and state.","SELECT `role_code`, `street`, `city`, `state` FROM `Professionals` WHERE `city` LIKE '%West%'"
+e63d2c7c,dog_kennels,"Find the role, street, city and state of the professionals living in a city that contains the substring 'West'.","SELECT `role_code`, `street`, `city`, `state` FROM `Professionals` WHERE `city` LIKE '%West%'"
+3731f0a8,dog_kennels,"Which owners live in the state whose name contains the substring 'North'? List his first name, last name and email.","SELECT `first_name`, `last_name`, `email_address` FROM `Owners` WHERE `state` LIKE '%North%'"
+e6fb9050,dog_kennels,"Return the first name, last name and email of the owners living in a state whose name contains the substring 'North'.","SELECT `first_name`, `last_name`, `email_address` FROM `Owners` WHERE `state` LIKE '%North%'"
+0960eada,dog_kennels,How much does the most recent treatment cost?,SELECT `cost_of_treatment` FROM `Treatments` ORDER BY `date_of_treatment` DESC LIMIT 1
+aeed0aff,dog_kennels,Show me the cost of the most recently performed treatment.,SELECT `cost_of_treatment` FROM `Treatments` ORDER BY `date_of_treatment` DESC LIMIT 1
+609fdbc2,dog_kennels,Tell me the number of dogs that have not received any treatment .,SELECT COUNT(*) FROM `Dogs` WHERE NOT `dog_id` IN (SELECT `dog_id` FROM `Treatments`)
+39368b96,dog_kennels,How many professionals did not operate any treatment on dogs?,SELECT COUNT(*) FROM `Professionals` WHERE NOT `professional_id` IN (SELECT `professional_id` FROM `Treatments`)
+7b18c882,dog_kennels,"List the dog name, age and weight of the dogs who have been abandoned? 1 stands for yes, and 0 stands for no.","SELECT `name`, `age`, `weight` FROM `Dogs` WHERE `abandoned_yn` = 1"
+7f37c184,dog_kennels,"What are the dog name, age and weight of the dogs that were abandoned? Note that 1 stands for yes, and 0 stands for no in the tables.","SELECT `name`, `age`, `weight` FROM `Dogs` WHERE `abandoned_yn` = 1"
+0d8c5493,dog_kennels,How much does each charge type costs? List both charge type and amount.,"SELECT `charge_type`, `charge_amount` FROM `Charges`"
+19391372,dog_kennels,List each charge type and its amount.,"SELECT `charge_type`, `charge_amount` FROM `Charges`"
+eef378ad,dog_kennels,How much does the most expensive charge type costs?,SELECT MAX(`charge_amount`) FROM `Charges`
+78185a6b,dog_kennels,What is the charge amount of the most expensive charge type?,SELECT MAX(`charge_amount`) FROM `Charges`
+2c3a0da0,dog_kennels,"List the email, cell phone and home phone of all the professionals.","SELECT `email_address`, `cell_number`, `home_phone` FROM `Professionals`"
+d0ed63ec,dog_kennels,"What are the email, cell phone and home phone of each professional?","SELECT `email_address`, `cell_number`, `home_phone` FROM `Professionals`"
+93acb72d,dog_kennels,Find the distinct breed type and size type combinations for dogs.,"SELECT DISTINCT `breed_code`, `size_code` FROM `Dogs`"
+1c2e4394,dog_kennels,List the first name of all the professionals along with the description of the treatment they have done.,"SELECT DISTINCT `t1`.`first_name`, `t3`.`treatment_type_description` FROM `Professionals` AS `t1` JOIN `Treatments` AS `t2` ON `t1`.`professional_id` = `t2`.`professional_id` JOIN `Treatment_Types` AS `t3` ON `t2`.`treatment_type_code` = `t3`.`treatment_type_code`"
+174c3b47,dog_kennels,What are each professional's first name and description of the treatment they have performed?,"SELECT DISTINCT `t1`.`first_name`, `t3`.`treatment_type_description` FROM `Professionals` AS `t1` JOIN `Treatments` AS `t2` ON `t1`.`professional_id` = `t2`.`professional_id` JOIN `Treatment_Types` AS `t3` ON `t2`.`treatment_type_code` = `t3`.`treatment_type_code`"
+df80b7a8,employee_hire_evaluation,How many employees are there?,SELECT COUNT(*) FROM `employee`
+42c6c7bf,employee_hire_evaluation,Count the number of employees,SELECT COUNT(*) FROM `employee`
+48958c5e,employee_hire_evaluation,Sort employee names by their age in ascending order.,SELECT `name` FROM `employee` ORDER BY `age`
+5b3cc93f,employee_hire_evaluation,List the names of employees and sort in ascending order of age.,SELECT `name` FROM `employee` ORDER BY `age`
+75c8ea43,employee_hire_evaluation,What is the number of employees from each city?,"SELECT COUNT(*), `city` FROM `employee` GROUP BY `city`"
+1081fab2,employee_hire_evaluation,Count the number of employees for each city.,"SELECT COUNT(*), `city` FROM `employee` GROUP BY `city`"
+e9db747a,employee_hire_evaluation,Which cities do more than one employee under age 30 come from?,SELECT `city` FROM `employee` WHERE `age` < 30 GROUP BY `city` HAVING COUNT(*) > 1
+7d03bbc2,employee_hire_evaluation,Find the cities that have more than one employee under age 30.,SELECT `city` FROM `employee` WHERE `age` < 30 GROUP BY `city` HAVING COUNT(*) > 1
+0b896c20,employee_hire_evaluation,Find the number of shops in each location.,"SELECT COUNT(*), `LOCATION` FROM `shop` GROUP BY `LOCATION`"
+4d67b2a8,employee_hire_evaluation,How many shops are there in each location?,"SELECT COUNT(*), `LOCATION` FROM `shop` GROUP BY `LOCATION`"
+88e3554a,employee_hire_evaluation,Find the manager name and district of the shop whose number of products is the largest.,"SELECT `manager_name`, `district` FROM `shop` ORDER BY `number_products` DESC LIMIT 1"
+395b6f72,employee_hire_evaluation,What are the manager name and district of the shop that sells the largest number of products?,"SELECT `manager_name`, `district` FROM `shop` ORDER BY `number_products` DESC LIMIT 1"
+26f7daca,employee_hire_evaluation,find the minimum and maximum number of products of all stores.,"SELECT MIN(`Number_products`), MAX(`Number_products`) FROM `shop`"
+13cdbe69,employee_hire_evaluation,What are the minimum and maximum number of products across all the shops?,"SELECT MIN(`Number_products`), MAX(`Number_products`) FROM `shop`"
+1fc701cc,employee_hire_evaluation,"Return the name, location and district of all shops in descending order of number of products.","SELECT `name`, `LOCATION`, `district` FROM `shop` ORDER BY `number_products` DESC"
+5a930e4d,employee_hire_evaluation,"Sort all the shops by number products in descending order, and return the name, location and district of each shop.","SELECT `name`, `LOCATION`, `district` FROM `shop` ORDER BY `number_products` DESC"
+f6a4f6a9,employee_hire_evaluation,Find the names of stores whose number products is more than the average number of products.,SELECT `name` FROM `shop` WHERE `number_products` > (SELECT AVG(`number_products`) FROM `shop`)
+c112b6a6,employee_hire_evaluation,Which shops' number products is above the average? Give me the shop names.,SELECT `name` FROM `shop` WHERE `number_products` > (SELECT AVG(`number_products`) FROM `shop`)
+9cea733f,employee_hire_evaluation,Find the name of the employee who got the highest one time bonus.,SELECT `t1`.`name` FROM `employee` AS `t1` JOIN `evaluation` AS `t2` ON `t1`.`Employee_ID` = `t2`.`Employee_ID` ORDER BY `t2`.`bonus` DESC LIMIT 1
+cc07f1f3,employee_hire_evaluation,Which employee received the biggest bonus? Give me the employee name.,SELECT `t1`.`name` FROM `employee` AS `t1` JOIN `evaluation` AS `t2` ON `t1`.`Employee_ID` = `t2`.`Employee_ID` ORDER BY `t2`.`bonus` DESC LIMIT 1
+34e55545,employee_hire_evaluation,Find the number of employees hired in each shop; show the shop name as well.,"SELECT COUNT(*), `t2`.`name` FROM `hiring` AS `t1` JOIN `shop` AS `t2` ON `t1`.`shop_id` = `t2`.`shop_id` GROUP BY `t2`.`name`"
+96c6960c,employee_hire_evaluation,What is total bonus given in all evaluations?,SELECT SUM(`bonus`) FROM `evaluation`
+30b532c9,employee_hire_evaluation,Find the total amount of bonus given in all the evaluations.,SELECT SUM(`bonus`) FROM `evaluation`
+513ba89b,employee_hire_evaluation,Give me all the information about hiring.,SELECT * FROM `hiring`
+e14b88a9,employee_hire_evaluation,What is all the information about hiring?,SELECT * FROM `hiring`
+0c370d70,employee_hire_evaluation,How many different store locations are there?,SELECT COUNT(DISTINCT `LOCATION`) FROM `shop`
+eaf84218,employee_hire_evaluation,Count the number of distinct store locations.,SELECT COUNT(DISTINCT `LOCATION`) FROM `shop`
+02eb538b,flight_2,"Which country does Airline ""JetBlue Airways"" belong to?",SELECT `Country` FROM `airlines` WHERE `Airline` = 'JetBlue Airways'
+001d8b6b,flight_2,What country is Jetblue Airways affiliated with?,SELECT `Country` FROM `airlines` WHERE `Airline` = 'JetBlue Airways'
+454949f1,flight_2,"What is the abbreviation of Airline ""JetBlue Airways""?",SELECT `Abbreviation` FROM `airlines` WHERE `Airline` = 'JetBlue Airways'
+c0fca413,flight_2,Which abbreviation corresponds to Jetblue Airways?,SELECT `Abbreviation` FROM `airlines` WHERE `Airline` = 'JetBlue Airways'
+ed33efb8,flight_2,"List all airline names and their abbreviations in ""USA"".","SELECT `Airline`, `Abbreviation` FROM `airlines` WHERE `Country` = 'USA'"
+8c70c4b5,flight_2,What are the airline names and abbreviations for airlines in the USA?,"SELECT `Airline`, `Abbreviation` FROM `airlines` WHERE `Country` = 'USA'"
+9d6c71c4,flight_2,List the airport code and name in the city of Anthony.,"SELECT `AirportCode`, `AirportName` FROM `airports` WHERE `city` = 'Anthony'"
+61a9ab76,flight_2,Give the airport code and airport name corresonding to the city Anthony.,"SELECT `AirportCode`, `AirportName` FROM `airports` WHERE `city` = 'Anthony'"
+7a70c898,flight_2,How many airlines do we have?,SELECT COUNT(*) FROM `airlines`
+994bcc26,flight_2,What is the total number of airlines?,SELECT COUNT(*) FROM `airlines`
+60adddda,flight_2,How many airports do we have?,SELECT COUNT(*) FROM `airports`
+469216e3,flight_2,Return the number of  airports.,SELECT COUNT(*) FROM `airports`
+1c19368e,flight_2,How many flights do we have?,SELECT COUNT(*) FROM `flights`
+449451a6,flight_2,Return the number of flights.,SELECT COUNT(*) FROM `flights`
+58a7dcef,flight_2,Which airline has abbreviation 'UAL'?,SELECT `Airline` FROM `airlines` WHERE `Abbreviation` = 'UAL'
+6b295f7f,flight_2,Give the airline with abbreviation 'UAL'.,SELECT `Airline` FROM `airlines` WHERE `Abbreviation` = 'UAL'
+279ad49f,flight_2,How many airlines are from USA?,SELECT COUNT(*) FROM `airlines` WHERE `Country` = 'USA'
+ca4b5e2a,flight_2,Return the number of airlines in the USA.,SELECT COUNT(*) FROM `airlines` WHERE `Country` = 'USA'
+d0b858aa,flight_2,Which city and country is the Alton airport at?,"SELECT `City`, `Country` FROM `airports` WHERE `AirportName` = 'Alton'"
+1da56048,flight_2,Give the city and country for the Alton airport.,"SELECT `City`, `Country` FROM `airports` WHERE `AirportName` = 'Alton'"
+8282c1d1,flight_2,What is the airport name for airport 'AKO'?,SELECT `AirportName` FROM `airports` WHERE `AirportCode` = 'AKO'
+a134a0e9,flight_2,Return the name of the airport with code 'AKO'.,SELECT `AirportName` FROM `airports` WHERE `AirportCode` = 'AKO'
+6559c997,flight_2,What are airport names at City 'Aberdeen'?,SELECT `AirportName` FROM `airports` WHERE `City` = 'Aberdeen'
+98c27fa2,flight_2,What are the names of airports in Aberdeen?,SELECT `AirportName` FROM `airports` WHERE `City` = 'Aberdeen'
+1c3b2531,flight_2,How many flights depart from 'APG'?,SELECT COUNT(*) FROM `flights` WHERE `SourceAirport` = 'APG'
+24a7321e,flight_2,Count the number of flights departing from 'APG'.,SELECT COUNT(*) FROM `flights` WHERE `SourceAirport` = 'APG'
+d8ade761,flight_2,How many flights have destination ATO?,SELECT COUNT(*) FROM `flights` WHERE `DestAirport` = 'ATO'
+041a92f5,flight_2,Count the number of flights into ATO.,SELECT COUNT(*) FROM `flights` WHERE `DestAirport` = 'ATO'
+074e8891,flight_2,How many flights depart from City Aberdeen?,SELECT COUNT(*) FROM `flights` AS `t1` JOIN `airports` AS `t2` ON `t1`.`SourceAirport` = `t2`.`AirportCode` WHERE `t2`.`City` = 'Aberdeen'
+1b82bb17,flight_2,Return the number of flights departing from Aberdeen.,SELECT COUNT(*) FROM `flights` AS `t1` JOIN `airports` AS `t2` ON `t1`.`SourceAirport` = `t2`.`AirportCode` WHERE `t2`.`City` = 'Aberdeen'
+e28ab173,flight_2,How many flights arriving in Aberdeen city?,SELECT COUNT(*) FROM `flights` AS `t1` JOIN `airports` AS `t2` ON `t1`.`DestAirport` = `t2`.`AirportCode` WHERE `t2`.`City` = 'Aberdeen'
+e014a05a,flight_2,Return the number of flights arriving in Aberdeen.,SELECT COUNT(*) FROM `flights` AS `t1` JOIN `airports` AS `t2` ON `t1`.`DestAirport` = `t2`.`AirportCode` WHERE `t2`.`City` = 'Aberdeen'
+31f6d573,flight_2,How many flights depart from City 'Aberdeen' and have destination City 'Ashley'?,SELECT COUNT(*) FROM `flights` AS `t1` JOIN `airports` AS `t2` ON `t1`.`DestAirport` = `t2`.`AirportCode` JOIN `airports` AS `t3` ON `t1`.`SourceAirport` = `t3`.`AirportCode` WHERE `t2`.`City` = 'Ashley' AND `t3`.`City` = 'Aberdeen'
+14e295b4,flight_2,How many flights fly from Aberdeen to Ashley?,SELECT COUNT(*) FROM `flights` AS `t1` JOIN `airports` AS `t2` ON `t1`.`DestAirport` = `t2`.`AirportCode` JOIN `airports` AS `t3` ON `t1`.`SourceAirport` = `t3`.`AirportCode` WHERE `t2`.`City` = 'Ashley' AND `t3`.`City` = 'Aberdeen'
+e6cbdcc8,flight_2,How many flights does airline 'JetBlue Airways' have?,SELECT COUNT(*) FROM `flights` AS `t1` JOIN `airlines` AS `t2` ON `t1`.`Airline` = `t2`.`uid` WHERE `t2`.`Airline` = 'JetBlue Airways'
+d5a99812,flight_2,Give the number of Jetblue Airways flights.,SELECT COUNT(*) FROM `flights` AS `t1` JOIN `airlines` AS `t2` ON `t1`.`Airline` = `t2`.`uid` WHERE `t2`.`Airline` = 'JetBlue Airways'
+7d18190f,flight_2,How many 'United Airlines' flights go to Airport 'ASY'?,SELECT COUNT(*) FROM `airlines` AS `t1` JOIN `flights` AS `t2` ON `t2`.`Airline` = `t1`.`uid` WHERE `t1`.`Airline` = 'United Airlines' AND `t2`.`DestAirport` = 'ASY'
+630ad2e0,flight_2,Count the number of United Airlines flights arriving in ASY Airport.,SELECT COUNT(*) FROM `airlines` AS `t1` JOIN `flights` AS `t2` ON `t2`.`Airline` = `t1`.`uid` WHERE `t1`.`Airline` = 'United Airlines' AND `t2`.`DestAirport` = 'ASY'
+6c37bd7d,flight_2,How many 'United Airlines' flights depart from Airport 'AHD'?,SELECT COUNT(*) FROM `airlines` AS `t1` JOIN `flights` AS `t2` ON `t2`.`Airline` = `t1`.`uid` WHERE `t1`.`Airline` = 'United Airlines' AND `t2`.`SourceAirport` = 'AHD'
+ae599218,flight_2,Return the number of United Airlines flights leaving from AHD Airport.,SELECT COUNT(*) FROM `airlines` AS `t1` JOIN `flights` AS `t2` ON `t2`.`Airline` = `t1`.`uid` WHERE `t1`.`Airline` = 'United Airlines' AND `t2`.`SourceAirport` = 'AHD'
+fc3fc818,flight_2,How many United Airlines flights go to City 'Aberdeen'?,SELECT COUNT(*) FROM `flights` AS `t1` JOIN `airports` AS `t2` ON `t1`.`DestAirport` = `t2`.`AirportCode` JOIN `airlines` AS `t3` ON `t3`.`uid` = `t1`.`Airline` WHERE `t2`.`City` = 'Aberdeen' AND `t3`.`Airline` = 'United Airlines'
+f8a5a829,flight_2,Count the number of United Airlines flights that arrive in Aberdeen.,SELECT COUNT(*) FROM `flights` AS `t1` JOIN `airports` AS `t2` ON `t1`.`DestAirport` = `t2`.`AirportCode` JOIN `airlines` AS `t3` ON `t3`.`uid` = `t1`.`Airline` WHERE `t2`.`City` = 'Aberdeen' AND `t3`.`Airline` = 'United Airlines'
+af4f5bd3,flight_2,Which city has most number of arriving flights?,SELECT `t1`.`City` FROM `airports` AS `t1` JOIN `flights` AS `t2` ON `t1`.`AirportCode` = `t2`.`DestAirport` GROUP BY `t1`.`City` ORDER BY COUNT(*) DESC LIMIT 1
+1b2af6a2,flight_2,Which city has the most frequent destination airport?,SELECT `t1`.`City` FROM `airports` AS `t1` JOIN `flights` AS `t2` ON `t1`.`AirportCode` = `t2`.`DestAirport` GROUP BY `t1`.`City` ORDER BY COUNT(*) DESC LIMIT 1
+91678737,flight_2,Which city has most number of departing flights?,SELECT `t1`.`City` FROM `airports` AS `t1` JOIN `flights` AS `t2` ON `t1`.`AirportCode` = `t2`.`SourceAirport` GROUP BY `t1`.`City` ORDER BY COUNT(*) DESC LIMIT 1
+f6b822c4,flight_2,Which city is the most frequent source airport?,SELECT `t1`.`City` FROM `airports` AS `t1` JOIN `flights` AS `t2` ON `t1`.`AirportCode` = `t2`.`SourceAirport` GROUP BY `t1`.`City` ORDER BY COUNT(*) DESC LIMIT 1
+7b4fb76c,flight_2,What is the code of airport that has the highest number of flights?,SELECT `t1`.`AirportCode` FROM `airports` AS `t1` JOIN `flights` AS `t2` ON `t1`.`AirportCode` = `t2`.`DestAirport` OR `t1`.`AirportCode` = `t2`.`SourceAirport` GROUP BY `t1`.`AirportCode` ORDER BY COUNT(*) DESC LIMIT 1
+a3fd2680,flight_2,What is the airport code of the airport with the most flights?,SELECT `t1`.`AirportCode` FROM `airports` AS `t1` JOIN `flights` AS `t2` ON `t1`.`AirportCode` = `t2`.`DestAirport` OR `t1`.`AirportCode` = `t2`.`SourceAirport` GROUP BY `t1`.`AirportCode` ORDER BY COUNT(*) DESC LIMIT 1
+2fcf3e1c,flight_2,Which airline has most number of flights?,SELECT `t1`.`Airline` FROM `airlines` AS `t1` JOIN `flights` AS `t2` ON `t1`.`uid` = `t2`.`Airline` GROUP BY `t1`.`Airline` ORDER BY COUNT(*) DESC LIMIT 1
+d8bdba4b,flight_2,What airline serves the most flights?,SELECT `t1`.`Airline` FROM `airlines` AS `t1` JOIN `flights` AS `t2` ON `t1`.`uid` = `t2`.`Airline` GROUP BY `t1`.`Airline` ORDER BY COUNT(*) DESC LIMIT 1
+23bf9832,flight_2,What are airlines that have some flight departing from airport 'AHD'?,SELECT `t1`.`Airline` FROM `airlines` AS `t1` JOIN `flights` AS `t2` ON `t1`.`uid` = `t2`.`Airline` WHERE `t2`.`SourceAirport` = 'AHD'
+d5236ce8,flight_2,Which airlines have a flight with destination airport AHD?,SELECT `t1`.`Airline` FROM `airlines` AS `t1` JOIN `flights` AS `t2` ON `t1`.`uid` = `t2`.`Airline` WHERE `t2`.`DestAirport` = 'AHD'
+c7558d59,flight_2,"What are flight numbers of Airline ""United Airlines""?",SELECT `t1`.`FlightNo` FROM `flights` AS `t1` JOIN `airlines` AS `t2` ON `t2`.`uid` = `t1`.`Airline` WHERE `t2`.`Airline` = 'United Airlines'
+d7a733b9,flight_2,Which flight numbers correspond to United Airlines flights?,SELECT `t1`.`FlightNo` FROM `flights` AS `t1` JOIN `airlines` AS `t2` ON `t2`.`uid` = `t1`.`Airline` WHERE `t2`.`Airline` = 'United Airlines'
+76c79711,flight_2,"What are flight numbers of flights departing from Airport ""APG""?",SELECT `FlightNo` FROM `flights` WHERE `SourceAirport` = 'APG'
+999f0ad0,flight_2,Give the flight numbers of flights leaving from APG.,SELECT `FlightNo` FROM `flights` WHERE `SourceAirport` = 'APG'
+47d81506,flight_2,"What are flight numbers of flights arriving at Airport ""APG""?",SELECT `FlightNo` FROM `flights` WHERE `DestAirport` = 'APG'
+66be0c6c,flight_2,Give the flight numbers of flights landing at APG.,SELECT `FlightNo` FROM `flights` WHERE `DestAirport` = 'APG'
+aa49d3fc,flight_2,"What are flight numbers of flights departing from City ""Aberdeen ""?",SELECT `t1`.`FlightNo` FROM `flights` AS `t1` JOIN `airports` AS `t2` ON `t1`.`SourceAirport` = `t2`.`AirportCode` WHERE `t2`.`City` = 'Aberdeen'
+5a20d008,flight_2,Give the flight numbers of flights leaving from Aberdeen.,SELECT `t1`.`FlightNo` FROM `flights` AS `t1` JOIN `airports` AS `t2` ON `t1`.`SourceAirport` = `t2`.`AirportCode` WHERE `t2`.`City` = 'Aberdeen'
+8fbfbf70,flight_2,"What are flight numbers of flights arriving at City ""Aberdeen""?",SELECT `t1`.`FlightNo` FROM `flights` AS `t1` JOIN `airports` AS `t2` ON `t1`.`DestAirport` = `t2`.`AirportCode` WHERE `t2`.`City` = 'Aberdeen'
+5f877675,flight_2,Give the flight numbers of flights arriving in Aberdeen.,SELECT `t1`.`FlightNo` FROM `flights` AS `t1` JOIN `airports` AS `t2` ON `t1`.`DestAirport` = `t2`.`AirportCode` WHERE `t2`.`City` = 'Aberdeen'
+4042c8e0,flight_2,Find the number of flights landing in the city of Aberdeen or Abilene.,SELECT COUNT(*) FROM `flights` AS `t1` JOIN `airports` AS `t2` ON `t1`.`DestAirport` = `t2`.`AirportCode` WHERE `t2`.`city` = 'Aberdeen' OR `t2`.`city` = 'Abilene'
+31ff9af7,flight_2,How many flights land in Aberdeen or Abilene?,SELECT COUNT(*) FROM `flights` AS `t1` JOIN `airports` AS `t2` ON `t1`.`DestAirport` = `t2`.`AirportCode` WHERE `t2`.`city` = 'Aberdeen' OR `t2`.`city` = 'Abilene'
+4831d2fc,museum_visit,How many visitors below age 30 are there?,SELECT COUNT(*) FROM `visitor` WHERE `age` < 30
+162f0001,museum_visit,"Find the names of the visitors whose membership level is higher than 4, and order the results by the level from high to low.",SELECT `name` FROM `visitor` WHERE `Level_of_membership` > 4 ORDER BY `Level_of_membership` DESC
+ccf8a39b,museum_visit,What is the average age of the visitors whose membership level is not higher than 4?,SELECT AVG(`age`) FROM `visitor` WHERE `Level_of_membership` <= 4
+5f7d5d49,museum_visit,"Find the name and membership level of the visitors whose membership level is higher than 4, and sort by their age from old to young.","SELECT `name`, `Level_of_membership` FROM `visitor` WHERE `Level_of_membership` > 4 ORDER BY `age` DESC"
+128056e9,museum_visit,Find the id and name of the museum that has the most staff members?,"SELECT `museum_id`, `name` FROM `museum` ORDER BY `num_of_staff` DESC LIMIT 1"
+5dab0a8d,museum_visit,What are the opening year and staff number of the museum named Plaza Museum?,"SELECT `Num_of_Staff`, `Open_Year` FROM `museum` WHERE `name` = 'Plaza Museum'"
+f9f894c2,museum_visit,Find the name and age of the visitor who bought the most tickets at once.,"SELECT `t1`.`name`, `t1`.`age` FROM `visitor` AS `t1` JOIN `visit` AS `t2` ON `t1`.`id` = `t2`.`visitor_id` ORDER BY `t2`.`num_of_ticket` DESC LIMIT 1"
+b984ab6d,museum_visit,What are the average and maximum number of tickets bought in all visits?,"SELECT AVG(`num_of_ticket`), MAX(`num_of_ticket`) FROM `visit`"
+c820e55b,museum_visit,What is the total ticket expense of the visitors whose membership level is 1?,SELECT SUM(`t2`.`Total_spent`) FROM `visitor` AS `t1` JOIN `visit` AS `t2` ON `t1`.`id` = `t2`.`visitor_id` WHERE `t1`.`Level_of_membership` = 1
+a53563e6,museum_visit,Find the number of visitors who did not visit any museum opened after 2010.,SELECT COUNT(*) FROM `visitor` WHERE NOT `id` IN (SELECT `t2`.`visitor_id` FROM `museum` AS `t1` JOIN `visit` AS `t2` ON `t1`.`Museum_ID` = `t2`.`Museum_ID` WHERE `t1`.`open_year` > 2010)
+89a016c1,museum_visit,How many museums were opened after 2013 or before 2008?,SELECT COUNT(*) FROM `museum` WHERE `open_year` > 2013 OR `open_year` < 2008
+e562a592,network_1,How many high schoolers are there?,SELECT COUNT(*) FROM `Highschooler`
+e7a6ef8a,network_1,Count the number of high schoolers.,SELECT COUNT(*) FROM `Highschooler`
+87e55ca5,network_1,Show the names and grades of each high schooler.,"SELECT `name`, `grade` FROM `Highschooler`"
+c9eccc15,network_1,What are the names and grades for each high schooler?,"SELECT `name`, `grade` FROM `Highschooler`"
+01331e36,network_1,Show all the grades of the high schoolers.,SELECT `grade` FROM `Highschooler`
+bf82720c,network_1,What grade is Kyle in?,SELECT `grade` FROM `Highschooler` WHERE `name` = 'Kyle'
+02743079,network_1,Return the grade for the high schooler named Kyle.,SELECT `grade` FROM `Highschooler` WHERE `name` = 'Kyle'
+a4282840,network_1,Show the names of all high schoolers in grade 10.,SELECT `name` FROM `Highschooler` WHERE `grade` = 10
+870e88c6,network_1,What are the names of all high schoolers in grade 10?,SELECT `name` FROM `Highschooler` WHERE `grade` = 10
+22684688,network_1,Show the ID of the high schooler named Kyle.,SELECT `ID` FROM `Highschooler` WHERE `name` = 'Kyle'
+f49cd174,network_1,What is Kyle's id?,SELECT `ID` FROM `Highschooler` WHERE `name` = 'Kyle'
+022fa814,network_1,How many high schoolers are there in grade 9 or 10?,SELECT COUNT(*) FROM `Highschooler` WHERE `grade` = 9 OR `grade` = 10
+6d8f3cf5,network_1,Count the number of high schoolers in grades 9 or 10.,SELECT COUNT(*) FROM `Highschooler` WHERE `grade` = 9 OR `grade` = 10
+9518ee97,network_1,Show the number of high schoolers for each grade.,"SELECT `grade`, COUNT(*) FROM `Highschooler` GROUP BY `grade`"
+c11d7ff2,network_1,How many high schoolers are in each grade?,"SELECT `grade`, COUNT(*) FROM `Highschooler` GROUP BY `grade`"
+a12cd7ad,network_1,Which grade has the most high schoolers?,SELECT `grade` FROM `Highschooler` GROUP BY `grade` ORDER BY COUNT(*) DESC LIMIT 1
+f529e2f2,network_1,Return the grade that has the greatest number of high schoolers.,SELECT `grade` FROM `Highschooler` GROUP BY `grade` ORDER BY COUNT(*) DESC LIMIT 1
+f5aceec3,network_1,Show me all grades that have at least 4 students.,SELECT `grade` FROM `Highschooler` GROUP BY `grade` HAVING COUNT(*) >= 4
+b57652c8,network_1,Which grades have 4 or more high schoolers?,SELECT `grade` FROM `Highschooler` GROUP BY `grade` HAVING COUNT(*) >= 4
+80563cf7,network_1,Show the names of all of the high schooler Kyle's friends.,SELECT `t3`.`name` FROM `Friend` AS `t1` JOIN `Highschooler` AS `t2` ON `t1`.`student_id` = `t2`.`id` JOIN `Highschooler` AS `t3` ON `t1`.`friend_id` = `t3`.`id` WHERE `t2`.`name` = 'Kyle'
+d2195a60,network_1,Return the names of friends of the high school student Kyle.,SELECT `t3`.`name` FROM `Friend` AS `t1` JOIN `Highschooler` AS `t2` ON `t1`.`student_id` = `t2`.`id` JOIN `Highschooler` AS `t3` ON `t1`.`friend_id` = `t3`.`id` WHERE `t2`.`name` = 'Kyle'
+2e322e56,network_1,How many friends does the high school student Kyle have?,SELECT COUNT(*) FROM `Friend` AS `t1` JOIN `Highschooler` AS `t2` ON `t1`.`student_id` = `t2`.`id` WHERE `t2`.`name` = 'Kyle'
+dd0b9f68,network_1,Count the number of friends Kyle has.,SELECT COUNT(*) FROM `Friend` AS `t1` JOIN `Highschooler` AS `t2` ON `t1`.`student_id` = `t2`.`id` WHERE `t2`.`name` = 'Kyle'
+e365a6c3,network_1,Count the number of likes for each student id.,"SELECT `student_id`, COUNT(*) FROM `Likes` GROUP BY `student_id`"
+aa38abb2,network_1,How many likes correspond to each student id?,"SELECT `student_id`, COUNT(*) FROM `Likes` GROUP BY `student_id`"
+98b9af57,orchestra,How many conductors are there?,SELECT COUNT(*) FROM `conductor`
+86ac853b,orchestra,Count the number of conductors.,SELECT COUNT(*) FROM `conductor`
+7aa3c936,orchestra,List the names of conductors in ascending order of age.,SELECT `Name` FROM `conductor` ORDER BY `Age` ASC
+191f41d8,orchestra,"What are the names of conductors, ordered by age?",SELECT `Name` FROM `conductor` ORDER BY `Age` ASC
+47cc1c56,orchestra,"What are the names of conductors whose nationalities are not ""USA""?",SELECT `Name` FROM `conductor` WHERE `Nationality` <> 'USA'
+45ceeb0a,orchestra,"Return the names of conductors that do not have the nationality ""USA"".",SELECT `Name` FROM `conductor` WHERE `Nationality` <> 'USA'
+2e16ac5a,orchestra,What are the record companies of orchestras in descending order of years in which they were founded?,SELECT `Record_Company` FROM `orchestra` ORDER BY `Year_of_Founded` DESC
+6aed1f6b,orchestra,"Return the record companies of orchestras, sorted descending by the years in which they were founded.",SELECT `Record_Company` FROM `orchestra` ORDER BY `Year_of_Founded` DESC
+7df61fe9,orchestra,What is the average attendance of shows?,SELECT AVG(`Attendance`) FROM `show`
+3c813db8,orchestra,Return the average attendance across all shows.,SELECT AVG(`Attendance`) FROM `show`
+f8f9135d,orchestra,How many different nationalities do conductors have?,SELECT COUNT(DISTINCT `Nationality`) FROM `conductor`
+181bc96d,orchestra,Count the number of different nationalities of conductors.,SELECT COUNT(DISTINCT `Nationality`) FROM `conductor`
+56920f06,orchestra,List names of conductors in descending order of years of work.,SELECT `Name` FROM `conductor` ORDER BY `Year_of_Work` DESC
+b5cd60b7,orchestra,"What are the names of conductors, sorted descending by the number of years they have worked?",SELECT `Name` FROM `conductor` ORDER BY `Year_of_Work` DESC
+a5d98946,orchestra,List the name of the conductor with the most years of work.,SELECT `Name` FROM `conductor` ORDER BY `Year_of_Work` DESC LIMIT 1
+1dccf5ca,orchestra,What is the name of the conductor who has worked the greatest number of years?,SELECT `Name` FROM `conductor` ORDER BY `Year_of_Work` DESC LIMIT 1
+5e28ad7f,orchestra,Show the names of conductors and the orchestras they have conducted.,"SELECT `t1`.`Name`, `t2`.`Orchestra` FROM `conductor` AS `t1` JOIN `orchestra` AS `t2` ON `t1`.`Conductor_ID` = `t2`.`Conductor_ID`"
+98b1f0f3,orchestra,What are the names of conductors as well as the corresonding orchestras that they have conducted?,"SELECT `t1`.`Name`, `t2`.`Orchestra` FROM `conductor` AS `t1` JOIN `orchestra` AS `t2` ON `t1`.`Conductor_ID` = `t2`.`Conductor_ID`"
+f5a812e9,orchestra,Please show the name of the conductor that has conducted orchestras founded after 2008.,SELECT `t1`.`Name` FROM `conductor` AS `t1` JOIN `orchestra` AS `t2` ON `t1`.`Conductor_ID` = `t2`.`Conductor_ID` WHERE `Year_of_Founded` > 2008
+5c7312fe,orchestra,What are the names of conductors who have conducted orchestras founded after the year 2008?,SELECT `t1`.`Name` FROM `conductor` AS `t1` JOIN `orchestra` AS `t2` ON `t1`.`Conductor_ID` = `t2`.`Conductor_ID` WHERE `Year_of_Founded` > 2008
+feaebc14,orchestra,Please show the different record companies and the corresponding number of orchestras.,"SELECT `Record_Company`, COUNT(*) FROM `orchestra` GROUP BY `Record_Company`"
+a5dcce55,orchestra,How many orchestras does each record company manage?,"SELECT `Record_Company`, COUNT(*) FROM `orchestra` GROUP BY `Record_Company`"
+1d63a9e8,orchestra,List the record company shared by the most number of orchestras.,SELECT `Record_Company` FROM `orchestra` GROUP BY `Record_Company` ORDER BY COUNT(*) DESC LIMIT 1
+60140dc4,orchestra,What is the record company used by the greatest number of orchestras?,SELECT `Record_Company` FROM `orchestra` GROUP BY `Record_Company` ORDER BY COUNT(*) DESC LIMIT 1
+c77b2733,orchestra,"Find the number of orchestras whose record format is ""CD"" or ""DVD"".",SELECT COUNT(*) FROM `orchestra` WHERE `Major_Record_Format` = 'CD' OR `Major_Record_Format` = 'DVD'
+0c347816,orchestra,Count the number of orchestras that have CD or DVD as their record format.,SELECT COUNT(*) FROM `orchestra` WHERE `Major_Record_Format` = 'CD' OR `Major_Record_Format` = 'DVD'
+f6e46b5d,pets_1,Find the number of pets whose weight is heavier than 10.,SELECT COUNT(*) FROM `Pets` WHERE `weight` > 10
+6b939a20,pets_1,How many pets have a greater weight than 10?,SELECT COUNT(*) FROM `Pets` WHERE `weight` > 10
+2b52b5f1,pets_1,Find the maximum weight for each type of pet. List the maximum weight and pet type.,"SELECT MAX(`weight`), `petType` FROM `Pets` GROUP BY `petType`"
+be38161b,pets_1,List the maximum weight and type for each type of pet.,"SELECT MAX(`weight`), `petType` FROM `Pets` GROUP BY `petType`"
+d4dde840,pets_1,Find number of pets owned by students who are older than 20.,SELECT COUNT(*) FROM `Student` AS `t1` JOIN `Has_Pet` AS `t2` ON `t1`.`stuid` = `t2`.`stuid` WHERE `t1`.`age` > 20
+987ffad4,pets_1,How many pets are owned by students that have an age greater than 20?,SELECT COUNT(*) FROM `Student` AS `t1` JOIN `Has_Pet` AS `t2` ON `t1`.`stuid` = `t2`.`stuid` WHERE `t1`.`age` > 20
+7066e045,pets_1,Find the number of dog pets that are raised by female students (with sex F).,SELECT COUNT(*) FROM `Student` AS `t1` JOIN `Has_Pet` AS `t2` ON `t1`.`stuid` = `t2`.`stuid` JOIN `Pets` AS `t3` ON `t2`.`petid` = `t3`.`petid` WHERE `t1`.`sex` = 'F' AND `t3`.`pettype` = 'dog'
+553e2229,pets_1,How many dog pets are raised by female students?,SELECT COUNT(*) FROM `Student` AS `t1` JOIN `Has_Pet` AS `t2` ON `t1`.`stuid` = `t2`.`stuid` JOIN `Pets` AS `t3` ON `t2`.`petid` = `t3`.`petid` WHERE `t1`.`sex` = 'F' AND `t3`.`pettype` = 'dog'
+002f32bd,pets_1,Find the number of distinct type of pets.,SELECT COUNT(DISTINCT `pettype`) FROM `Pets`
+8d5efa2e,pets_1,How many different types of pet are there?,SELECT COUNT(DISTINCT `pettype`) FROM `Pets`
+7e8bbd1e,pets_1,Find the first name of students who have cat or dog pet.,SELECT DISTINCT `t1`.`Fname` FROM `Student` AS `t1` JOIN `Has_Pet` AS `t2` ON `t1`.`stuid` = `t2`.`stuid` JOIN `Pets` AS `t3` ON `t3`.`petid` = `t2`.`petid` WHERE `t3`.`pettype` = 'cat' OR `t3`.`pettype` = 'dog'
+68114860,pets_1,What are the first names of every student who has a cat or dog as a pet?,SELECT DISTINCT `t1`.`Fname` FROM `Student` AS `t1` JOIN `Has_Pet` AS `t2` ON `t1`.`stuid` = `t2`.`stuid` JOIN `Pets` AS `t3` ON `t3`.`petid` = `t2`.`petid` WHERE `t3`.`pettype` = 'cat' OR `t3`.`pettype` = 'dog'
+be047a58,pets_1,Find the first name and age of students who have a dog but do not have a cat as a pet.,"SELECT `t1`.`fname`, `t1`.`age` FROM `Student` AS `t1` JOIN `Has_Pet` AS `t2` ON `t1`.`stuid` = `t2`.`stuid` JOIN `Pets` AS `t3` ON `t3`.`petid` = `t2`.`petid` WHERE `t3`.`pettype` = 'dog' AND NOT `t1`.`stuid` IN (SELECT `t1`.`stuid` FROM `Student` AS `t1` JOIN `Has_Pet` AS `t2` ON `t1`.`stuid` = `t2`.`stuid` JOIN `Pets` AS `t3` ON `t3`.`petid` = `t2`.`petid` WHERE `t3`.`pettype` = 'cat')"
+113459ae,pets_1,Find the type and weight of the youngest pet.,"SELECT `pettype`, `weight` FROM `Pets` ORDER BY `pet_age` LIMIT 1"
+6fb887f8,pets_1,"What type of pet is the youngest animal, and how much does it weigh?","SELECT `pettype`, `weight` FROM `Pets` ORDER BY `pet_age` LIMIT 1"
+631b8f33,pets_1,Find the id and weight of all pets whose age is older than 1.,"SELECT `petid`, `weight` FROM `Pets` WHERE `pet_age` > 1"
+c0db2e99,pets_1,What is the id and weight of every pet who is older than 1?,"SELECT `petid`, `weight` FROM `Pets` WHERE `pet_age` > 1"
+4082b79e,pets_1,Find the average and maximum age for each type of pet.,"SELECT AVG(`pet_age`), MAX(`pet_age`), `pettype` FROM `Pets` GROUP BY `pettype`"
+a8a0fa47,pets_1,What is the average and maximum age for each pet type?,"SELECT AVG(`pet_age`), MAX(`pet_age`), `pettype` FROM `Pets` GROUP BY `pettype`"
+4906c6e5,pets_1,Find the average weight for each pet type.,"SELECT AVG(`weight`), `pettype` FROM `Pets` GROUP BY `pettype`"
+7b40a70b,pets_1,What is the average weight for each type of pet?,"SELECT AVG(`weight`), `pettype` FROM `Pets` GROUP BY `pettype`"
+415865ad,pets_1,Find the first name and age of students who have a pet.,"SELECT DISTINCT `t1`.`fname`, `t1`.`age` FROM `Student` AS `t1` JOIN `Has_Pet` AS `t2` ON `t1`.`stuid` = `t2`.`stuid`"
+e25fda1e,pets_1,What are the different first names and ages of the students who do have pets?,"SELECT DISTINCT `t1`.`fname`, `t1`.`age` FROM `Student` AS `t1` JOIN `Has_Pet` AS `t2` ON `t1`.`stuid` = `t2`.`stuid`"
+426a5c10,pets_1,Find the id of the pet owned by student whose last name is ‘Smith’.,SELECT `t2`.`petid` FROM `Student` AS `t1` JOIN `Has_Pet` AS `t2` ON `t1`.`stuid` = `t2`.`stuid` WHERE `t1`.`Lname` = 'Smith'
+7b3dd4da,pets_1,What is the id of the pet owned by the student whose last name is 'Smith'?,SELECT `t2`.`petid` FROM `Student` AS `t1` JOIN `Has_Pet` AS `t2` ON `t1`.`stuid` = `t2`.`stuid` WHERE `t1`.`Lname` = 'Smith'
+8e14918f,pets_1,Find the number of pets for each student who has any pet and student id.,"SELECT COUNT(*), `t1`.`stuid` FROM `Student` AS `t1` JOIN `Has_Pet` AS `t2` ON `t1`.`stuid` = `t2`.`stuid` GROUP BY `t1`.`stuid`"
+989447a7,pets_1,"For students who have pets , how many pets does each student have ? list their ids instead of names .","SELECT COUNT(*), `t1`.`stuid` FROM `Student` AS `t1` JOIN `Has_Pet` AS `t2` ON `t1`.`stuid` = `t2`.`stuid` GROUP BY `t1`.`stuid`"
+eff056e5,pets_1,Find the last name of the student who has a cat that is age 3.,SELECT `t1`.`lname` FROM `Student` AS `t1` JOIN `Has_Pet` AS `t2` ON `t1`.`stuid` = `t2`.`stuid` JOIN `Pets` AS `t3` ON `t3`.`petid` = `t2`.`petid` WHERE `t3`.`pet_age` = 3 AND `t3`.`pettype` = 'cat'
+80e3dcbc,pets_1,What is the last name of the student who has a cat that is 3 years old?,SELECT `t1`.`lname` FROM `Student` AS `t1` JOIN `Has_Pet` AS `t2` ON `t1`.`stuid` = `t2`.`stuid` JOIN `Pets` AS `t3` ON `t3`.`petid` = `t2`.`petid` WHERE `t3`.`pet_age` = 3 AND `t3`.`pettype` = 'cat'
+f890773e,poker_player,How many poker players are there?,SELECT COUNT(*) FROM `poker_player`
+1ba80a52,poker_player,Count the number of poker players.,SELECT COUNT(*) FROM `poker_player`
+39c59ae8,poker_player,List the earnings of poker players in descending order.,SELECT `Earnings` FROM `poker_player` ORDER BY `Earnings` DESC
+dd5da235,poker_player,"What are the earnings of poker players, ordered descending by value?",SELECT `Earnings` FROM `poker_player` ORDER BY `Earnings` DESC
+6b8c8cf5,poker_player,List the final tables made and the best finishes of poker players.,"SELECT `Final_Table_Made`, `Best_Finish` FROM `poker_player`"
+1cca26ac,poker_player,What are the final tables made and best finishes for all poker players?,"SELECT `Final_Table_Made`, `Best_Finish` FROM `poker_player`"
+7231d449,poker_player,What is the average earnings of poker players?,SELECT AVG(`Earnings`) FROM `poker_player`
+4f149a9b,poker_player,Return the average earnings across all poker players.,SELECT AVG(`Earnings`) FROM `poker_player`
+082122d5,poker_player,What is the money rank of the poker player with the highest earnings?,SELECT `Money_Rank` FROM `poker_player` ORDER BY `Earnings` DESC LIMIT 1
+bf446a7a,poker_player,Return the money rank of the player with the greatest earnings.,SELECT `Money_Rank` FROM `poker_player` ORDER BY `Earnings` DESC LIMIT 1
+cd3edd75,poker_player,What is the maximum number of final tables made among poker players with earnings less than 200000?,SELECT MAX(`Final_Table_Made`) FROM `poker_player` WHERE `Earnings` < 200000
+74e755a9,poker_player,Return the maximum final tables made across all poker players who have earnings below 200000.,SELECT MAX(`Final_Table_Made`) FROM `poker_player` WHERE `Earnings` < 200000
+6a66343d,poker_player,What are the names of poker players?,SELECT `t1`.`Name` FROM `people` AS `t1` JOIN `poker_player` AS `t2` ON `t1`.`People_ID` = `t2`.`People_ID`
+b3fcb773,poker_player,Return the names of all the poker players.,SELECT `t1`.`Name` FROM `people` AS `t1` JOIN `poker_player` AS `t2` ON `t1`.`People_ID` = `t2`.`People_ID`
+87660bb4,poker_player,What are the names of poker players whose earnings is higher than 300000?,SELECT `t1`.`Name` FROM `people` AS `t1` JOIN `poker_player` AS `t2` ON `t1`.`People_ID` = `t2`.`People_ID` WHERE `t2`.`Earnings` > 300000
+848e9997,poker_player,Give the names of poker players who have earnings above 300000.,SELECT `t1`.`Name` FROM `people` AS `t1` JOIN `poker_player` AS `t2` ON `t1`.`People_ID` = `t2`.`People_ID` WHERE `t2`.`Earnings` > 300000
+54310875,poker_player,List the names of poker players ordered by the final tables made in ascending order.,SELECT `t1`.`Name` FROM `people` AS `t1` JOIN `poker_player` AS `t2` ON `t1`.`People_ID` = `t2`.`People_ID` ORDER BY `t2`.`Final_Table_Made`
+f3431dd6,poker_player,"What are the names of poker players, ordered ascending by the number of final tables they have made?",SELECT `t1`.`Name` FROM `people` AS `t1` JOIN `poker_player` AS `t2` ON `t1`.`People_ID` = `t2`.`People_ID` ORDER BY `t2`.`Final_Table_Made`
+d18bdbc9,poker_player,What is the birth date of the poker player with the lowest earnings?,SELECT `t1`.`Birth_Date` FROM `people` AS `t1` JOIN `poker_player` AS `t2` ON `t1`.`People_ID` = `t2`.`People_ID` ORDER BY `t2`.`Earnings` ASC LIMIT 1
+841c10a3,poker_player,Return the birth date of the poker player with the lowest earnings.,SELECT `t1`.`Birth_Date` FROM `people` AS `t1` JOIN `poker_player` AS `t2` ON `t1`.`People_ID` = `t2`.`People_ID` ORDER BY `t2`.`Earnings` ASC LIMIT 1
+c0420ccb,poker_player,What is the money rank of the tallest poker player?,SELECT `t2`.`Money_Rank` FROM `people` AS `t1` JOIN `poker_player` AS `t2` ON `t1`.`People_ID` = `t2`.`People_ID` ORDER BY `t1`.`Height` DESC LIMIT 1
+956a18aa,poker_player,Return the money rank of the poker player with the greatest height.,SELECT `t2`.`Money_Rank` FROM `people` AS `t1` JOIN `poker_player` AS `t2` ON `t1`.`People_ID` = `t2`.`People_ID` ORDER BY `t1`.`Height` DESC LIMIT 1
+d064361b,poker_player,What is the average earnings of poker players with height higher than 200?,SELECT AVG(`t2`.`Earnings`) FROM `people` AS `t1` JOIN `poker_player` AS `t2` ON `t1`.`People_ID` = `t2`.`People_ID` WHERE `t1`.`Height` > 200
+b396b6a6,poker_player,Give average earnings of poker players who are taller than 200.,SELECT AVG(`t2`.`Earnings`) FROM `people` AS `t1` JOIN `poker_player` AS `t2` ON `t1`.`People_ID` = `t2`.`People_ID` WHERE `t1`.`Height` > 200
+c4240ca3,poker_player,What are the names of poker players in descending order of earnings?,SELECT `t1`.`Name` FROM `people` AS `t1` JOIN `poker_player` AS `t2` ON `t1`.`People_ID` = `t2`.`People_ID` ORDER BY `t2`.`Earnings` DESC
+7d20adbe,poker_player,Return the names of poker players sorted by their earnings descending.,SELECT `t1`.`Name` FROM `people` AS `t1` JOIN `poker_player` AS `t2` ON `t1`.`People_ID` = `t2`.`People_ID` ORDER BY `t2`.`Earnings` DESC
+ec70ef70,poker_player,What are different nationalities of people and the corresponding number of people from each nation?,"SELECT `Nationality`, COUNT(*) FROM `people` GROUP BY `Nationality`"
+0a4f9e01,poker_player,How many people are there of each nationality?,"SELECT `Nationality`, COUNT(*) FROM `people` GROUP BY `Nationality`"
+40c52485,poker_player,What is the most common nationality of people?,SELECT `Nationality` FROM `people` GROUP BY `Nationality` ORDER BY COUNT(*) DESC LIMIT 1
+c6e860df,poker_player,Give the nationality that is most common across all people.,SELECT `Nationality` FROM `people` GROUP BY `Nationality` ORDER BY COUNT(*) DESC LIMIT 1
+4ad99b58,poker_player,What are the nationalities that are shared by at least two people?,SELECT `Nationality` FROM `people` GROUP BY `Nationality` HAVING COUNT(*) >= 2
+3c44b7b0,poker_player,Return the nationalities for which there are two or more people.,SELECT `Nationality` FROM `people` GROUP BY `Nationality` HAVING COUNT(*) >= 2
+9da044b7,poker_player,List the names and birth dates of people in ascending alphabetical order of name.,"SELECT `Name`, `Birth_Date` FROM `people` ORDER BY `Name` ASC"
+9d1f4456,poker_player,"What are the names and birth dates of people, ordered by their names in alphabetical order?","SELECT `Name`, `Birth_Date` FROM `people` ORDER BY `Name` ASC"
+25a90e8a,poker_player,"Show names of people whose nationality is not ""Russia"".",SELECT `Name` FROM `people` WHERE `Nationality` <> 'Russia'
+05cc3cfe,poker_player,What are the names of people who are not from Russia?,SELECT `Name` FROM `people` WHERE `Nationality` <> 'Russia'
+365a652b,poker_player,How many distinct nationalities are there?,SELECT COUNT(DISTINCT `Nationality`) FROM `people`
+459dcc1a,poker_player,Count the number of different nationalities.,SELECT COUNT(DISTINCT `Nationality`) FROM `people`
+44c9c687,real_estate_properties,How many available features are there in total?,SELECT COUNT(*) FROM `Other_Available_Features`
+fa34ff45,real_estate_properties,What is the feature type name of feature AirCon?,SELECT `t2`.`feature_type_name` FROM `Other_Available_Features` AS `t1` JOIN `Ref_Feature_Types` AS `t2` ON `t1`.`feature_type_code` = `t2`.`feature_type_code` WHERE `t1`.`feature_name` = 'AirCon'
+678f0c44,singer,How many singers are there?,SELECT COUNT(*) FROM `singer`
+96cb741d,singer,What is the count of singers?,SELECT COUNT(*) FROM `singer`
+05ffe14d,singer,List the name of singers in ascending order of net worth.,SELECT `Name` FROM `singer` ORDER BY `Net_Worth_Millions` ASC
+c4d6c8ae,singer,What are the names of singers ordered by ascending net worth?,SELECT `Name` FROM `singer` ORDER BY `Net_Worth_Millions` ASC
+cec7e29d,singer,What are the birth year and citizenship of singers?,"SELECT `Birth_Year`, `Citizenship` FROM `singer`"
+98a63c4d,singer,What are the birth years and citizenships of the singers?,"SELECT `Birth_Year`, `Citizenship` FROM `singer`"
+e5d4a823,singer,"List the name of singers whose citizenship is not ""France"".",SELECT `Name` FROM `singer` WHERE `Citizenship` <> 'France'
+d8bce670,singer,What are the names of the singers who are not French citizens?,SELECT `Name` FROM `singer` WHERE `Citizenship` <> 'France'
+aa5d3060,singer,Show the name of singers whose birth year is either 1948 or 1949?,SELECT `Name` FROM `singer` WHERE `Birth_Year` = 1948 OR `Birth_Year` = 1949
+c5069cd9,singer,What are the names of the singers whose birth years are either 1948 or 1949?,SELECT `Name` FROM `singer` WHERE `Birth_Year` = 1948 OR `Birth_Year` = 1949
+2543d193,singer,What is the name of the singer with the largest net worth?,SELECT `Name` FROM `singer` ORDER BY `Net_Worth_Millions` DESC LIMIT 1
+e0f52c7f,singer,What is the name of the singer who is worth the most?,SELECT `Name` FROM `singer` ORDER BY `Net_Worth_Millions` DESC LIMIT 1
+d0d64159,singer,Show different citizenship of singers and the number of singers of each citizenship.,"SELECT `Citizenship`, COUNT(*) FROM `singer` GROUP BY `Citizenship`"
+b9c71b03,singer,"For each citizenship, how many singers are from that country?","SELECT `Citizenship`, COUNT(*) FROM `singer` GROUP BY `Citizenship`"
+33fb432a,singer,Please show the most common citizenship of singers.,SELECT `Citizenship` FROM `singer` GROUP BY `Citizenship` ORDER BY COUNT(*) DESC LIMIT 1
+844ef471,singer,What is the most common singer citizenship ?,SELECT `citizenship` FROM `singer` GROUP BY `citizenship` ORDER BY COUNT(*) DESC LIMIT 1
+929b28da,singer,Show different citizenships and the maximum net worth of singers of each citizenship.,"SELECT `Citizenship`, MAX(`Net_Worth_Millions`) FROM `singer` GROUP BY `Citizenship`"
+e6e4a39c,singer,"For each citizenship, what is the maximum net worth?","SELECT `Citizenship`, MAX(`Net_Worth_Millions`) FROM `singer` GROUP BY `Citizenship`"
+cc20c209,singer,Show titles of songs and names of singers.,"SELECT `t2`.`Title`, `t1`.`Name` FROM `singer` AS `t1` JOIN `song` AS `t2` ON `t1`.`Singer_ID` = `t2`.`Singer_ID`"
+439a6a5b,singer,What are the song titles and singer names?,"SELECT `t2`.`Title`, `t1`.`Name` FROM `singer` AS `t1` JOIN `song` AS `t2` ON `t1`.`Singer_ID` = `t2`.`Singer_ID`"
+294c2756,singer,Show distinct names of singers that have songs with sales more than 300000.,SELECT DISTINCT `t1`.`Name` FROM `singer` AS `t1` JOIN `song` AS `t2` ON `t1`.`Singer_ID` = `t2`.`Singer_ID` WHERE `t2`.`Sales` > 300000
+b48ee060,singer,what are the different names of the singers that have sales more than 300000?,SELECT DISTINCT `t1`.`Name` FROM `singer` AS `t1` JOIN `song` AS `t2` ON `t1`.`Singer_ID` = `t2`.`Singer_ID` WHERE `t2`.`Sales` > 300000
+d89d3a9f,singer,"For each singer name, what is the total sales for their songs?","SELECT `t1`.`Name`, SUM(`t2`.`Sales`) FROM `singer` AS `t1` JOIN `song` AS `t2` ON `t1`.`Singer_ID` = `t2`.`Singer_ID` GROUP BY `t1`.`Name`"
+b2a6520a,singer,What is the sname of every sing that does not have any song?,SELECT `Name` FROM `singer` WHERE NOT `Singer_ID` IN (SELECT `Singer_ID` FROM `song`)
+848b8df6,student_transcripts_tracking,what are all the addresses including line 1 and line 2?,"SELECT `line_1`, `line_2` FROM `Addresses`"
+0aab1328,student_transcripts_tracking,What is the first and second line for all addresses?,"SELECT `line_1`, `line_2` FROM `Addresses`"
+01f03930,student_transcripts_tracking,How many courses in total are listed?,SELECT COUNT(*) FROM `Courses`
+f00bf589,student_transcripts_tracking,How many courses are there?,SELECT COUNT(*) FROM `Courses`
+a1b09c6f,student_transcripts_tracking,How is the math course described?,SELECT `course_description` FROM `Courses` WHERE `course_name` = 'math'
+a8ddfa52,student_transcripts_tracking,What is the zip code of the address in the city Port Chelsea?,SELECT `zip_postcode` FROM `Addresses` WHERE `city` = 'Port Chelsea'
+03765611,student_transcripts_tracking,What is the zip code for Port Chelsea?,SELECT `zip_postcode` FROM `Addresses` WHERE `city` = 'Port Chelsea'
+46ab707c,student_transcripts_tracking,Which department offers the most number of degrees? List department name and id.,"SELECT `t2`.`department_name`, `t1`.`department_id` FROM `Degree_Programs` AS `t1` JOIN `Departments` AS `t2` ON `t1`.`department_id` = `t2`.`department_id` GROUP BY `t2`.`department_name`, `t1`.`department_id` ORDER BY COUNT(*) DESC LIMIT 1"
+0cccbbfa,student_transcripts_tracking,What is the name and id of the department with the most number of degrees ?,"SELECT `t2`.`department_name`, `t1`.`department_id` FROM `Degree_Programs` AS `t1` JOIN `Departments` AS `t2` ON `t1`.`department_id` = `t2`.`department_id` GROUP BY `t2`.`department_name`, `t1`.`department_id` ORDER BY COUNT(*) DESC LIMIT 1"
+9c7d8c8d,student_transcripts_tracking,How many departments offer any degree?,SELECT COUNT(DISTINCT `department_id`) FROM `Degree_Programs`
+e379afb0,student_transcripts_tracking,How many different departments offer degrees?,SELECT COUNT(DISTINCT `department_id`) FROM `Degree_Programs`
+eb97b393,student_transcripts_tracking,How many different degree names are offered?,SELECT COUNT(DISTINCT `degree_summary_name`) FROM `Degree_Programs`
+cbd13ecd,student_transcripts_tracking,What are the names and descriptions of all the sections?,"SELECT `section_name`, `section_description` FROM `Sections`"
+bf477fa8,student_transcripts_tracking,What are the names and descriptions for all the sections?,"SELECT `section_name`, `section_description` FROM `Sections`"
+e95b3c0c,student_transcripts_tracking,List the section_name in reversed lexicographical order.,SELECT `section_name` FROM `Sections` ORDER BY `section_name` DESC
+72f58eb6,student_transcripts_tracking,What are the names of the sections in reverse alphabetical order?,SELECT `section_name` FROM `Sections` ORDER BY `section_name` DESC
+63d2cde5,student_transcripts_tracking,What is the semester which most student registered in? Show both the name and the id.,"SELECT `t1`.`semester_name`, `t1`.`semester_id` FROM `Semesters` AS `t1` JOIN `Student_Enrolment` AS `t2` ON `t1`.`semester_id` = `t2`.`semester_id` GROUP BY `t1`.`semester_name`, `t1`.`semester_id` ORDER BY COUNT(*) DESC LIMIT 1"
+083547ae,student_transcripts_tracking,"For each semester, what is the name and id of the one with the most students registered?","SELECT `t1`.`semester_name`, `t1`.`semester_id` FROM `Semesters` AS `t1` JOIN `Student_Enrolment` AS `t2` ON `t1`.`semester_id` = `t2`.`semester_id` GROUP BY `t1`.`semester_name`, `t1`.`semester_id` ORDER BY COUNT(*) DESC LIMIT 1"
+126d3da4,student_transcripts_tracking,What is the department description for the one whose name has the word computer?,SELECT `department_description` FROM `Departments` WHERE `department_name` LIKE '%computer%'
+efb800bf,student_transcripts_tracking,"Which student has enrolled for the most times in any program? List the id, first name, middle name, last name, the number of enrollments and student id.","SELECT `t1`.`student_id`, `t1`.`first_name`, `t1`.`middle_name`, `t1`.`last_name`, COUNT(*), `t1`.`student_id` FROM `Students` AS `t1` JOIN `Student_Enrolment` AS `t2` ON `t1`.`student_id` = `t2`.`student_id` GROUP BY `t1`.`student_id`, `t1`.`first_name`, `t1`.`middle_name`, `t1`.`last_name`, `t1`.`student_id` ORDER BY COUNT(*) DESC LIMIT 1"
+663d2aff,student_transcripts_tracking,"What is the first, middle, and last name, along with the id and number of enrollments, for the student who enrolled the most in any program?","SELECT `t1`.`student_id`, `t1`.`first_name`, `t1`.`middle_name`, `t1`.`last_name`, COUNT(*), `t1`.`student_id` FROM `Students` AS `t1` JOIN `Student_Enrolment` AS `t2` ON `t1`.`student_id` = `t2`.`student_id` GROUP BY `t1`.`student_id`, `t1`.`first_name`, `t1`.`middle_name`, `t1`.`last_name`, `t1`.`student_id` ORDER BY COUNT(*) DESC LIMIT 1"
+8e8006a5,student_transcripts_tracking,What is the name of the semester with no students enrolled?,SELECT `semester_name` FROM `Semesters` WHERE NOT `semester_id` IN (SELECT `semester_id` FROM `Student_Enrolment`)
+c646d2c0,student_transcripts_tracking,What are all the course names of the courses which ever have students enrolled in?,SELECT DISTINCT `t1`.`course_name` FROM `Courses` AS `t1` JOIN `Student_Enrolment_Courses` AS `t2` ON `t1`.`course_id` = `t2`.`course_id`
+9da9568c,student_transcripts_tracking,What are the names of all courses that have some students enrolled?,SELECT DISTINCT `t1`.`course_name` FROM `Courses` AS `t1` JOIN `Student_Enrolment_Courses` AS `t2` ON `t1`.`course_id` = `t2`.`course_id`
+5428584f,student_transcripts_tracking,Show the date and id of the transcript with at least 2 course results.,"SELECT `t2`.`transcript_date`, `t1`.`transcript_id` FROM `Transcript_Contents` AS `t1` JOIN `Transcripts` AS `t2` ON `t1`.`transcript_id` = `t2`.`transcript_id` GROUP BY `t2`.`transcript_date`, `t1`.`transcript_id` HAVING COUNT(*) >= 2"
+09a1e9c0,student_transcripts_tracking,What is the date and id of the transcript with at least 2 courses listed?,"SELECT `t2`.`transcript_date`, `t1`.`transcript_id` FROM `Transcript_Contents` AS `t1` JOIN `Transcripts` AS `t2` ON `t1`.`transcript_id` = `t2`.`transcript_id` GROUP BY `t2`.`transcript_date`, `t1`.`transcript_id` HAVING COUNT(*) >= 2"
+bec22562,student_transcripts_tracking,What is the phone number of the man with the first name Timmothy and the last name Ward?,SELECT `cell_mobile_number` FROM `Students` WHERE `first_name` = 'Timmothy' AND `last_name` = 'Ward'
+37530bcc,student_transcripts_tracking,What is the mobile phone number of the student named Timmothy Ward ?,SELECT `cell_mobile_number` FROM `Students` WHERE `first_name` = 'timmothy' AND `last_name` = 'ward'
+fb14ce28,student_transcripts_tracking,"Who is the first student to register? List the first name, middle name and last name.","SELECT `first_name`, `middle_name`, `last_name` FROM `Students` ORDER BY `date_first_registered` ASC LIMIT 1"
+b063e91d,student_transcripts_tracking,"What is the first, middle, and last name of the first student to register?","SELECT `first_name`, `middle_name`, `last_name` FROM `Students` ORDER BY `date_first_registered` ASC LIMIT 1"
+b58b91bb,student_transcripts_tracking,Whose permanent address is different from his or her current address? List his or her first name.,SELECT `first_name` FROM `Students` WHERE `current_address_id` <> `permanent_address_id`
+b4147971,student_transcripts_tracking,What is the first name of the student whose permanent address is different from his or her current one?,SELECT `first_name` FROM `Students` WHERE `current_address_id` <> `permanent_address_id`
+f75ba6cb,student_transcripts_tracking,When is the first transcript released? List the date and details.,"SELECT `transcript_date`, `other_details` FROM `Transcripts` ORDER BY `transcript_date` ASC LIMIT 1"
+ac01ca02,student_transcripts_tracking,How many transcripts are released?,SELECT COUNT(*) FROM `Transcripts`
+073d8e73,student_transcripts_tracking,How many transcripts are listed?,SELECT COUNT(*) FROM `Transcripts`
+f0c1ddd2,student_transcripts_tracking,What is the last transcript release date?,SELECT `transcript_date` FROM `Transcripts` ORDER BY `transcript_date` DESC LIMIT 1
+f4ed7cea,student_transcripts_tracking,When was the last transcript released?,SELECT `transcript_date` FROM `Transcripts` ORDER BY `transcript_date` DESC LIMIT 1
+e1de10e2,student_transcripts_tracking,How many times at most can a course enrollment result show in different transcripts? Also show the course enrollment id.,"SELECT COUNT(*), `student_course_id` FROM `Transcript_Contents` GROUP BY `student_course_id` ORDER BY COUNT(*) DESC LIMIT 1"
+680bdf1f,student_transcripts_tracking,What is the maximum number of times that a course shows up in different transcripts and what is that course's enrollment id?,"SELECT COUNT(*), `student_course_id` FROM `Transcript_Contents` GROUP BY `student_course_id` ORDER BY COUNT(*) DESC LIMIT 1"
+b849e68f,student_transcripts_tracking,"Show the date of the transcript which shows the least number of results, also list the id.","SELECT `t2`.`transcript_date`, `t1`.`transcript_id` FROM `Transcript_Contents` AS `t1` JOIN `Transcripts` AS `t2` ON `t1`.`transcript_id` = `t2`.`transcript_id` GROUP BY `t2`.`transcript_date`, `t1`.`transcript_id` ORDER BY COUNT(*) ASC LIMIT 1"
+1729d095,student_transcripts_tracking,How many different addresses do the students currently live?,SELECT COUNT(DISTINCT `current_address_id`) FROM `Students`
+7d29b2e3,student_transcripts_tracking,Describe the section h.,SELECT `section_description` FROM `Sections` WHERE `section_name` = 'h'
+333c491a,student_transcripts_tracking,What is the description for the section named h?,SELECT `section_description` FROM `Sections` WHERE `section_name` = 'h'
+0ea8a2ab,student_transcripts_tracking,Find the first name of the students who permanently live in the country Haiti or have the cell phone number 09700166582 .,SELECT `t1`.`first_name` FROM `Students` AS `t1` JOIN `Addresses` AS `t2` ON `t1`.`permanent_address_id` = `t2`.`address_id` WHERE `t2`.`country` = 'haiti' OR `t1`.`cell_mobile_number` = '09700166582'
+2f71495f,student_transcripts_tracking,What are the first names of the students who live in Haiti permanently or have the cell phone number 09700166582 ?,SELECT `t1`.`first_name` FROM `Students` AS `t1` JOIN `Addresses` AS `t2` ON `t1`.`permanent_address_id` = `t2`.`address_id` WHERE `t2`.`country` = 'haiti' OR `t1`.`cell_mobile_number` = '09700166582'
+65b07663,tvshow,List the title of all cartoons in alphabetical order.,SELECT `Title` FROM `Cartoon` ORDER BY `title`
+10763936,tvshow,What are the titles of the cartoons sorted alphabetically?,SELECT `Title` FROM `Cartoon` ORDER BY `title`
+e21e1aa8,tvshow,"List all cartoon directed by ""Ben Jones"".",SELECT `Title` FROM `Cartoon` WHERE `Directed_by` = 'Ben Jones'
+b03c26b0,tvshow,What are the names of all cartoons directed by Ben Jones?,SELECT `Title` FROM `Cartoon` WHERE `Directed_by` = 'Ben Jones'
+62fb36dc,tvshow,"How many cartoons were written by ""Joseph Kuhr""?",SELECT COUNT(*) FROM `Cartoon` WHERE `Written_by` = 'Joseph Kuhr'
+af023355,tvshow,What is the number of cartoones written by Joseph Kuhr?,SELECT COUNT(*) FROM `Cartoon` WHERE `Written_by` = 'Joseph Kuhr'
+a1b0c3bf,tvshow,list all cartoon titles and their directors ordered by their air date,"SELECT `title`, `Directed_by` FROM `Cartoon` ORDER BY `Original_air_date`"
+8b2f1d3d,tvshow,What is the name and directors of all the cartoons that are ordered by air date?,"SELECT `title`, `Directed_by` FROM `Cartoon` ORDER BY `Original_air_date`"
+f4d87160,tvshow,"List the title of all cartoon directed by ""Ben Jones"" or ""Brandon Vietti"".",SELECT `Title` FROM `Cartoon` WHERE `Directed_by` = 'Ben Jones' OR `Directed_by` = 'Brandon Vietti'
+1226247f,tvshow,What are the titles of all cartoons directed by Ben Jones or Brandon Vietti?,SELECT `Title` FROM `Cartoon` WHERE `Directed_by` = 'Ben Jones' OR `Directed_by` = 'Brandon Vietti'
+b3681985,tvshow,Which country has the most of TV Channels? List the country and number of TV Channels it has.,"SELECT `Country`, COUNT(*) FROM `TV_Channel` GROUP BY `Country` ORDER BY COUNT(*) DESC LIMIT 1"
+5deaa419,tvshow,What is the country with the most number of TV Channels and how many does it have?,"SELECT `Country`, COUNT(*) FROM `TV_Channel` GROUP BY `Country` ORDER BY COUNT(*) DESC LIMIT 1"
+8329901d,tvshow,List the number of different series names and contents in the TV Channel table.,"SELECT COUNT(DISTINCT `series_name`), COUNT(DISTINCT `content`) FROM `TV_Channel`"
+892b3543,tvshow,How many different series and contents are listed in the TV Channel table?,"SELECT COUNT(DISTINCT `series_name`), COUNT(DISTINCT `content`) FROM `TV_Channel`"
+0c518617,tvshow,"What is the content of TV Channel with serial name ""Sky Radio""?",SELECT `Content` FROM `TV_Channel` WHERE `series_name` = 'Sky Radio'
+e949b593,tvshow,What is the content of the series Sky Radio?,SELECT `Content` FROM `TV_Channel` WHERE `series_name` = 'Sky Radio'
+93492283,tvshow,"What is the Package Option of TV Channel with serial name ""Sky Radio""?",SELECT `Package_Option` FROM `TV_Channel` WHERE `series_name` = 'Sky Radio'
+ddb1fdca,tvshow,What are the Package Options of the TV Channels whose series names are Sky Radio?,SELECT `Package_Option` FROM `TV_Channel` WHERE `series_name` = 'Sky Radio'
+e07c16bc,tvshow,How many TV Channel using language English?,SELECT COUNT(*) FROM `TV_Channel` WHERE `LANGUAGE` = 'English'
+58be2d33,tvshow,How many TV Channels use the English language?,SELECT COUNT(*) FROM `TV_Channel` WHERE `LANGUAGE` = 'English'
+33d90553,tvshow,List each language and the number of TV Channels using it.,"SELECT `LANGUAGE`, COUNT(*) FROM `TV_Channel` GROUP BY `LANGUAGE`"
+6f7222c0,tvshow,"For each language, list the number of TV Channels that use it.","SELECT `LANGUAGE`, COUNT(*) FROM `TV_Channel` GROUP BY `LANGUAGE`"
+e2f6b86a,tvshow,"What is the TV Channel that shows the cartoon ""The Rise of the Blue Beetle!""? List the TV Channel's series name.",SELECT `t1`.`series_name` FROM `TV_Channel` AS `t1` JOIN `Cartoon` AS `t2` ON `t1`.`id` = `t2`.`Channel` WHERE `t2`.`Title` = 'The Rise of the Blue Beetle!'
+375c2da6,tvshow,"List the title of all  Cartoons showed on TV Channel with series name ""Sky Radio"".",SELECT `t2`.`Title` FROM `TV_Channel` AS `t1` JOIN `Cartoon` AS `t2` ON `t1`.`id` = `t2`.`Channel` WHERE `t1`.`series_name` = 'Sky Radio'
+85890a59,tvshow,"What is the title of all the cartools that are on the TV Channel with the series name ""Sky Radio""?",SELECT `t2`.`Title` FROM `TV_Channel` AS `t1` JOIN `Cartoon` AS `t2` ON `t1`.`id` = `t2`.`Channel` WHERE `t1`.`series_name` = 'Sky Radio'
+efb1f9b4,tvshow,What is minimum and maximum share of TV series?,"SELECT MAX(`SHARE`), MIN(`SHARE`) FROM `TV_series`"
+11796036,tvshow,What is the maximum and minimum share for the TV series?,"SELECT MAX(`SHARE`), MIN(`SHARE`) FROM `TV_series`"
+b4873e64,tvshow,"What is the air date of TV series with Episode ""A Love of a Lifetime""?",SELECT `Air_Date` FROM `TV_series` WHERE `Episode` = 'A Love of a Lifetime'
+e4992953,tvshow,"When did the episode ""A Love of a Lifetime"" air?",SELECT `Air_Date` FROM `TV_series` WHERE `Episode` = 'A Love of a Lifetime'
+7b9820f1,tvshow,"What is Weekly Rank of TV series with Episode ""A Love of a Lifetime""?",SELECT `Weekly_Rank` FROM `TV_series` WHERE `Episode` = 'A Love of a Lifetime'
+8611e12e,tvshow,"What is the weekly rank for the episode ""A Love of a Lifetime""?",SELECT `Weekly_Rank` FROM `TV_series` WHERE `Episode` = 'A Love of a Lifetime'
+8733684b,tvshow,"What is the TV Channel of TV series with Episode ""A Love of a Lifetime""? List the TV Channel's series name.",SELECT `t1`.`series_name` FROM `TV_Channel` AS `t1` JOIN `TV_series` AS `t2` ON `t1`.`id` = `t2`.`Channel` WHERE `t2`.`Episode` = 'A Love of a Lifetime'
+dde3b565,tvshow,"What is the name of the series that has the episode ""A Love of a Lifetime""?",SELECT `t1`.`series_name` FROM `TV_Channel` AS `t1` JOIN `TV_series` AS `t2` ON `t1`.`id` = `t2`.`Channel` WHERE `t2`.`Episode` = 'A Love of a Lifetime'
+c85c27c6,tvshow,"List the Episode of all  TV series showed on TV Channel with series name ""Sky Radio"".",SELECT `t2`.`Episode` FROM `TV_Channel` AS `t1` JOIN `TV_series` AS `t2` ON `t1`.`id` = `t2`.`Channel` WHERE `t1`.`series_name` = 'Sky Radio'
+535e7216,tvshow,"What is the episode for the TV series named ""Sky Radio""?",SELECT `t2`.`Episode` FROM `TV_Channel` AS `t1` JOIN `TV_series` AS `t2` ON `t1`.`id` = `t2`.`Channel` WHERE `t1`.`series_name` = 'Sky Radio'
+5b879eb3,tvshow,Find the number of cartoons directed by each of the listed directors.,"SELECT COUNT(*), `Directed_by` FROM `Cartoon` GROUP BY `Directed_by`"
+aca7ecb3,tvshow,How many cartoons did each director create?,"SELECT COUNT(*), `Directed_by` FROM `Cartoon` GROUP BY `Directed_by`"
+62c23bcd,tvshow,What is the produdction code and channel of the most recent cartoon ?,"SELECT `production_code`, `channel` FROM `Cartoon` ORDER BY `original_air_date` DESC LIMIT 1"
+996350ed,tvshow,Find the package choice and series name of the TV channel that has high definition TV.,"SELECT `package_option`, `series_name` FROM `TV_Channel` WHERE `hight_definition_TV` = 'yes'"
+0e7ce431,tvshow,What are the package options and the name of the series for the TV Channel that supports high definition TV?,"SELECT `package_option`, `series_name` FROM `TV_Channel` WHERE `hight_definition_TV` = 'yes'"
+3195c520,tvshow,find the pixel aspect ratio and nation of the tv channels that do not use English.,"SELECT `Pixel_aspect_ratio_PAR`, `country` FROM `TV_Channel` WHERE `LANGUAGE` <> 'English'"
+f1102f3b,tvshow,What is the pixel aspect ratio and country of origin for all TV channels that do not use English?,"SELECT `Pixel_aspect_ratio_PAR`, `country` FROM `TV_Channel` WHERE `LANGUAGE` <> 'English'"
+5a6b14bc,tvshow,What are the package options of all tv channels that are not playing any cartoons directed by Ben Jones?,SELECT `package_option` FROM `TV_Channel` WHERE NOT `id` IN (SELECT `channel` FROM `Cartoon` WHERE `directed_by` = 'Ben Jones')
+3bf5f58a,voter_1,"List the contestant numbers and names, ordered by contestant name descending.","SELECT `contestant_number`, `contestant_name` FROM `CONTESTANTS` ORDER BY `contestant_name` DESC"
+792ac10b,voter_1,"List the vote ids, phone numbers and states of all votes.","SELECT `vote_id`, `phone_number`, `state` FROM `VOTES`"
+4100f0a2,voter_1,What are the maximum and minimum values of area codes?,"SELECT MAX(`area_code`), MIN(`area_code`) FROM `AREA_CODE_STATE`"
+b5b230f2,voter_1,What is last date created of votes from the state 'CA'?,SELECT MAX(`created`) FROM `VOTES` WHERE `state` = 'CA'
+4aef71a9,voter_1,What are the names of the contestants whose names are not 'Jessie Alloway',SELECT `contestant_name` FROM `CONTESTANTS` WHERE `contestant_name` <> 'Jessie Alloway'
+861e0baf,voter_1,What are the distinct states and create time of all votes?,"SELECT DISTINCT `state`, `created` FROM `VOTES`"
+b0a71c95,voter_1,What are the contestant numbers and names of the contestants who had at least two votes?,"SELECT `t1`.`contestant_number`, `t1`.`contestant_name` FROM `CONTESTANTS` AS `t1` JOIN `VOTES` AS `t2` ON `t1`.`contestant_number` = `t2`.`contestant_number` GROUP BY `t1`.`contestant_number`, `t1`.`contestant_name` HAVING COUNT(*) >= 2"
+dae87736,voter_1,"Of all the contestants who got voted, what is the contestant number and name of the contestant who got least votes?","SELECT `t1`.`contestant_number`, `t1`.`contestant_name` FROM `CONTESTANTS` AS `t1` JOIN `VOTES` AS `t2` ON `t1`.`contestant_number` = `t2`.`contestant_number` GROUP BY `t1`.`contestant_number`, `t1`.`contestant_name` ORDER BY COUNT(*) ASC LIMIT 1"
+b3c0ff86,voter_1,What are the number of votes from state 'NY' or 'CA'?,SELECT COUNT(*) FROM `VOTES` WHERE `state` = 'NY' OR `state` = 'CA'
+f44ceb6c,voter_1,How many contestants did not get voted?,SELECT COUNT(*) FROM `CONTESTANTS` WHERE NOT `contestant_number` IN (SELECT `contestant_number` FROM `VOTES`)
+b6fa2766,voter_1,"What are the create dates, states, and phone numbers of the votes that were for the contestant named 'Tabatha Gehling'?","SELECT `t2`.`created`, `t2`.`state`, `t2`.`phone_number` FROM `CONTESTANTS` AS `t1` JOIN `VOTES` AS `t2` ON `t1`.`contestant_number` = `t2`.`contestant_number` WHERE `t1`.`contestant_name` = 'Tabatha Gehling'"
+67ab885b,voter_1,Return the names of the contestants whose names contain the substring 'Al' .,SELECT `contestant_name` FROM `CONTESTANTS` WHERE `contestant_name` LIKE '%al%'
+8127f696,world_1,What are the names of all the countries that became independent after 1950?,SELECT `Name` FROM `country` WHERE `IndepYear` > 1950
+4b0614a4,world_1,Give the names of the nations that were founded after 1950.,SELECT `Name` FROM `country` WHERE `IndepYear` > 1950
+51b01ded,world_1,What is the total surface area of the countries in the Caribbean region?,SELECT SUM(`SurfaceArea`) FROM `country` WHERE `Region` = 'Caribbean'
+f7fd60ee,world_1,How much surface area do the countires in the Carribean cover together?,SELECT SUM(`SurfaceArea`) FROM `country` WHERE `Region` = 'Caribbean'
+66e8408c,world_1,Which continent is Anguilla in?,SELECT `Continent` FROM `country` WHERE `Name` = 'Anguilla'
+c8772d6e,world_1,What is the continent name which Anguilla belongs to?,SELECT `Continent` FROM `country` WHERE `Name` = 'Anguilla'
+90d23b32,world_1,Which region is the city Kabul located in?,SELECT `Region` FROM `country` AS `t1` JOIN `city` AS `t2` ON `t1`.`Code` = `t2`.`CountryCode` WHERE `t2`.`Name` = 'Kabul'
+f3a62cee,world_1,What region is Kabul in?,SELECT `Region` FROM `country` AS `t1` JOIN `city` AS `t2` ON `t1`.`Code` = `t2`.`CountryCode` WHERE `t2`.`Name` = 'Kabul'
+7687d906,world_1,Which language is the most popular in Aruba?,SELECT `t2`.`Language` FROM `country` AS `t1` JOIN `countrylanguage` AS `t2` ON `t1`.`Code` = `t2`.`CountryCode` WHERE `t1`.`Name` = 'Aruba' ORDER BY `Percentage` DESC LIMIT 1
+3a258361,world_1,What language is predominantly spoken in Aruba?,SELECT `t2`.`Language` FROM `country` AS `t1` JOIN `countrylanguage` AS `t2` ON `t1`.`Code` = `t2`.`CountryCode` WHERE `t1`.`Name` = 'Aruba' ORDER BY `Percentage` DESC LIMIT 1
+9d551835,world_1,What are the population and life expectancies in Brazil?,"SELECT `Population`, `LifeExpectancy` FROM `country` WHERE `Name` = 'Brazil'"
+b2423f87,world_1,Give me Brazil’s population and life expectancies.,"SELECT `Population`, `LifeExpectancy` FROM `country` WHERE `Name` = 'Brazil'"
+bb157c8f,world_1,What are the region and population of Angola?,"SELECT `Population`, `Region` FROM `country` WHERE `Name` = 'Angola'"
+7631c4d1,world_1,What region does Angola belong to and what is its population?,"SELECT `Population`, `Region` FROM `country` WHERE `Name` = 'Angola'"
+05c71b9b,world_1,What is the average expected life expectancy for countries in the region of Central Africa?,SELECT AVG(`LifeExpectancy`) FROM `country` WHERE `Region` = 'Central Africa'
+0a89e6fa,world_1,How long is the people’s average life expectancy in Central Africa?,SELECT AVG(`LifeExpectancy`) FROM `country` WHERE `Region` = 'Central Africa'
+518e5f0f,world_1,What is the total population and maximum GNP in Asia?,"SELECT SUM(`Population`), MAX(`GNP`) FROM `country` WHERE `Continent` = 'Asia'"
+a65b3f0e,world_1,"How many people live in Asia, and what is the largest GNP among them?","SELECT SUM(`Population`), MAX(`GNP`) FROM `country` WHERE `Continent` = 'Asia'"
+790495eb,world_1,What is the total surface area of the continents Asia and Europe?,SELECT SUM(`SurfaceArea`) FROM `country` WHERE `Continent` = 'Asia' OR `Continent` = 'Europe'
+f5139900,world_1,Give the total surface area covered by countries in Asia or Europe.,SELECT SUM(`SurfaceArea`) FROM `country` WHERE `Continent` = 'Asia' OR `Continent` = 'Europe'
+a06a372c,world_1,How many people live in Gelderland district?,SELECT SUM(`Population`) FROM `city` WHERE `District` = 'Gelderland'
+01517aaa,world_1,What is the total population of Gelderland district?,SELECT SUM(`Population`) FROM `city` WHERE `District` = 'Gelderland'
+f641cfec,world_1,What is the average GNP and total population in all nations whose government is US territory?,"SELECT AVG(`GNP`), SUM(`population`) FROM `country` WHERE `GovernmentForm` = 'US Territory'"
+157747aa,world_1,Give the mean GNP and total population of nations which are considered US territory.,"SELECT AVG(`GNP`), SUM(`population`) FROM `country` WHERE `GovernmentForm` = 'US Territory'"
+c0efc849,world_1,How many unique languages are spoken in the world?,SELECT COUNT(DISTINCT `LANGUAGE`) FROM `countrylanguage`
+00d5b763,world_1,What is the number of distinct languages used around the world?,SELECT COUNT(DISTINCT `LANGUAGE`) FROM `countrylanguage`
+c46e06be,world_1,How many type of governments are in Africa?,SELECT COUNT(DISTINCT `GovernmentForm`) FROM `country` WHERE `Continent` = 'Africa'
+293213bd,world_1,How many different forms of governments are there in Africa?,SELECT COUNT(DISTINCT `GovernmentForm`) FROM `country` WHERE `Continent` = 'Africa'
+877a4f6e,world_1,What is the total number of languages used in Aruba?,SELECT COUNT(`t2`.`Language`) FROM `country` AS `t1` JOIN `countrylanguage` AS `t2` ON `t1`.`Code` = `t2`.`CountryCode` WHERE `t1`.`Name` = 'Aruba'
+e2cde191,world_1,How many languages are spoken in Aruba?,SELECT COUNT(`t2`.`Language`) FROM `country` AS `t1` JOIN `countrylanguage` AS `t2` ON `t1`.`Code` = `t2`.`CountryCode` WHERE `t1`.`Name` = 'Aruba'
+deaa707b,world_1,How many official languages does Afghanistan have?,SELECT COUNT(*) FROM `country` AS `t1` JOIN `countrylanguage` AS `t2` ON `t1`.`Code` = `t2`.`CountryCode` WHERE `t1`.`Name` = 'Afghanistan' AND `IsOfficial` = 'T'
+d74e655a,world_1,How many official languages are spoken in Afghanistan?,SELECT COUNT(*) FROM `country` AS `t1` JOIN `countrylanguage` AS `t2` ON `t1`.`Code` = `t2`.`CountryCode` WHERE `t1`.`Name` = 'Afghanistan' AND `IsOfficial` = 'T'
+f8e28d7d,world_1,What is name of the country that speaks the largest number of languages?,SELECT `t1`.`Name` FROM `country` AS `t1` JOIN `countrylanguage` AS `t2` ON `t1`.`Code` = `t2`.`CountryCode` GROUP BY `t1`.`Name` ORDER BY COUNT(*) DESC LIMIT 1
+50acfe0b,world_1,Give the name of the nation that uses the greatest amount of languages.,SELECT `t1`.`Name` FROM `country` AS `t1` JOIN `countrylanguage` AS `t2` ON `t1`.`Code` = `t2`.`CountryCode` GROUP BY `t1`.`Name` ORDER BY COUNT(*) DESC LIMIT 1
+3633d60d,world_1,What is the number of distinct continents where Chinese is spoken?,SELECT COUNT(DISTINCT `Continent`) FROM `country` AS `t1` JOIN `countrylanguage` AS `t2` ON `t1`.`Code` = `t2`.`CountryCode` WHERE `t2`.`Language` = 'Chinese'
+7647cc36,world_1,How many continents speak Chinese?,SELECT COUNT(DISTINCT `Continent`) FROM `country` AS `t1` JOIN `countrylanguage` AS `t2` ON `t1`.`Code` = `t2`.`CountryCode` WHERE `t2`.`Language` = 'Chinese'
+7111da9a,world_1,What are the regions that use English or Dutch?,SELECT DISTINCT `t1`.`Region` FROM `country` AS `t1` JOIN `countrylanguage` AS `t2` ON `t1`.`Code` = `t2`.`CountryCode` WHERE `t2`.`Language` = 'English' OR `t2`.`Language` = 'Dutch'
+39bd5c99,world_1,Which regions speak Dutch or English?,SELECT DISTINCT `t1`.`Region` FROM `country` AS `t1` JOIN `countrylanguage` AS `t2` ON `t1`.`Code` = `t2`.`CountryCode` WHERE `t2`.`Language` = 'English' OR `t2`.`Language` = 'Dutch'
+84a3c536,world_1,Which countries have either English or Dutch as an official language?,SELECT * FROM `country` AS `t1` JOIN `countrylanguage` AS `t2` ON `t1`.`Code` = `t2`.`CountryCode` WHERE `t2`.`Language` = 'English' AND `IsOfficial` = 'T' UNION SELECT * FROM `country` AS `t1` JOIN `countrylanguage` AS `t2` ON `t1`.`Code` = `t2`.`CountryCode` WHERE `t2`.`Language` = 'Dutch' AND `IsOfficial` = 'T'
+c85bf646,world_1,What is the language that is used by the largest number of Asian nations?,SELECT `t2`.`Language` FROM `country` AS `t1` JOIN `countrylanguage` AS `t2` ON `t1`.`Code` = `t2`.`CountryCode` WHERE `t1`.`Continent` = 'Asia' GROUP BY `t2`.`Language` ORDER BY COUNT(*) DESC LIMIT 1
+7fbe036e,world_1,Find the city with the largest population that uses English.,"SELECT `t1`.`Name`, `t1`.`Population` FROM `city` AS `t1` JOIN `countrylanguage` AS `t2` ON `t1`.`CountryCode` = `t2`.`CountryCode` WHERE `t2`.`Language` = 'English' ORDER BY `t1`.`Population` DESC LIMIT 1"
+6490120d,world_1,What is the most populace city that speaks English?,"SELECT `t1`.`Name`, `t1`.`Population` FROM `city` AS `t1` JOIN `countrylanguage` AS `t2` ON `t1`.`CountryCode` = `t2`.`CountryCode` WHERE `t2`.`Language` = 'English' ORDER BY `t1`.`Population` DESC LIMIT 1"
+1e2d7a31,world_1,"Find the name, population and expected life length of asian country with the largest area?","SELECT `Name`, `Population`, `LifeExpectancy` FROM `country` WHERE `Continent` = 'Asia' ORDER BY `SurfaceArea` DESC LIMIT 1"
+fe93adca,world_1,"What are the name, population, and life expectancy of the largest Asian country by land?","SELECT `Name`, `Population`, `LifeExpectancy` FROM `country` WHERE `Continent` = 'Asia' ORDER BY `SurfaceArea` DESC LIMIT 1"
+5d8a703d,world_1,What is average life expectancy in the countries where English is not the official language?,SELECT AVG(`LifeExpectancy`) FROM `country` WHERE NOT `Name` IN (SELECT `t1`.`Name` FROM `country` AS `t1` JOIN `countrylanguage` AS `t2` ON `t1`.`Code` = `t2`.`CountryCode` WHERE `t2`.`Language` = 'English' AND `t2`.`IsOfficial` = 'T')
+013d7073,world_1,Give the mean life expectancy of countries in which English is not the official language.,SELECT AVG(`LifeExpectancy`) FROM `country` WHERE NOT `Name` IN (SELECT `t1`.`Name` FROM `country` AS `t1` JOIN `countrylanguage` AS `t2` ON `t1`.`Code` = `t2`.`CountryCode` WHERE `t2`.`Language` = 'English' AND `t2`.`IsOfficial` = 'T')
+a9c4e989,world_1,What is the total number of people living in the nations that do not use English?,SELECT SUM(`Population`) FROM `country` WHERE NOT `Name` IN (SELECT `t1`.`Name` FROM `country` AS `t1` JOIN `countrylanguage` AS `t2` ON `t1`.`Code` = `t2`.`CountryCode` WHERE `t2`.`Language` = 'English')
+1b6e9c4b,world_1,What is the official language spoken in the country whose head of state is Beatrix?,SELECT `t2`.`Language` FROM `country` AS `t1` JOIN `countrylanguage` AS `t2` ON `t1`.`Code` = `t2`.`CountryCode` WHERE `t1`.`HeadOfState` = 'Beatrix' AND `t2`.`IsOfficial` = 'T'
+5a4f895d,world_1,What is the official language used in the country the name of whose head of state is Beatrix.,SELECT `t2`.`Language` FROM `country` AS `t1` JOIN `countrylanguage` AS `t2` ON `t1`.`Code` = `t2`.`CountryCode` WHERE `t1`.`HeadOfState` = 'Beatrix' AND `t2`.`IsOfficial` = 'T'
+90b5a202,world_1,What is the total number of unique official languages spoken in the countries that are founded before 1930?,SELECT COUNT(DISTINCT `t2`.`Language`) FROM `country` AS `t1` JOIN `countrylanguage` AS `t2` ON `t1`.`Code` = `t2`.`CountryCode` WHERE `IndepYear` < 1930 AND `t2`.`IsOfficial` = 'T'
+1896e55d,world_1,"For the countries founded before 1930, what is the total number of distinct official languages?",SELECT COUNT(DISTINCT `t2`.`Language`) FROM `country` AS `t1` JOIN `countrylanguage` AS `t2` ON `t1`.`Code` = `t2`.`CountryCode` WHERE `IndepYear` < 1930 AND `t2`.`IsOfficial` = 'T'
+f9c9e831,world_1,Which African countries have a smaller population than that of any country in Asia?,SELECT `Name` FROM `country` WHERE `Continent` = 'Africa' AND `population` < (SELECT MIN(`population`) FROM `country` WHERE `Continent` = 'Asia')
+77b46c6c,world_1,Which Asian countries have a population that is larger than any country in Africa?,SELECT `Name` FROM `country` WHERE `Continent` = 'Asia' AND `population` > (SELECT MAX(`population`) FROM `country` WHERE `Continent` = 'Africa')
+41af0105,world_1,What are the country codes of countries where people use languages other than English?,SELECT DISTINCT `CountryCode` FROM `countrylanguage` WHERE `LANGUAGE` <> 'English'
+7f618ee8,world_1,Give the country codes for countries in which people speak langauges that are not English.,SELECT DISTINCT `CountryCode` FROM `countrylanguage` WHERE `LANGUAGE` <> 'English'
+ce8b9a2f,world_1,Which unique cities are in Asian countries where Chinese is the official language ?,SELECT DISTINCT `t3`.`name` FROM `country` AS `t1` JOIN `countrylanguage` AS `t2` ON `t1`.`code` = `t2`.`countrycode` JOIN `city` AS `t3` ON `t1`.`code` = `t3`.`countrycode` WHERE `t2`.`isofficial` = 't' AND `t2`.`language` = 'chinese' AND `t1`.`continent` = 'asia'
+21b9e54b,world_1,Return the different names of cities that are in Asia and for which Chinese is the official language.,SELECT DISTINCT `t3`.`Name` FROM `country` AS `t1` JOIN `countrylanguage` AS `t2` ON `t1`.`Code` = `t2`.`CountryCode` JOIN `city` AS `t3` ON `t1`.`Code` = `t3`.`CountryCode` WHERE `t2`.`IsOfficial` = 'T' AND `t2`.`Language` = 'Chinese' AND `t1`.`Continent` = 'Asia'
+5bfac600,world_1,"What are the name, independence year, and surface area of the country with the smallest population?","SELECT `Name`, `SurfaceArea`, `IndepYear` FROM `country` ORDER BY `Population` LIMIT 1"
+2f1235ba,world_1,"Give the name, year of independence, and surface area of the country that has the lowest population.","SELECT `Name`, `SurfaceArea`, `IndepYear` FROM `country` ORDER BY `Population` LIMIT 1"
+f8f50ff0,world_1,"What are the population, name and leader of the country with the largest area?","SELECT `Name`, `population`, `HeadOfState` FROM `country` ORDER BY `SurfaceArea` DESC LIMIT 1"
+3a9f2e02,world_1,"Give the name, population, and head of state for the country that has the largest area.","SELECT `Name`, `population`, `HeadOfState` FROM `country` ORDER BY `SurfaceArea` DESC LIMIT 1"
+e8c35ce0,world_1,Return the country name and the numbers of languages spoken for each country that speaks at least 3 languages.,"SELECT COUNT(`t2`.`Language`), `t1`.`Name` FROM `country` AS `t1` JOIN `countrylanguage` AS `t2` ON `t1`.`Code` = `t2`.`CountryCode` GROUP BY `t1`.`Name` HAVING COUNT(*) > 2"
+75b78c51,world_1,"What are the names of countries that speak more than 2 languages, as well as how many languages they speak?","SELECT COUNT(`t2`.`Language`), `t1`.`Name` FROM `country` AS `t1` JOIN `countrylanguage` AS `t2` ON `t1`.`Code` = `t2`.`CountryCode` GROUP BY `t1`.`Name` HAVING COUNT(*) > 2"
+0a3623bb,world_1,Find the number of cities in each district whose population is greater than the average population of cities?,"SELECT COUNT(*), `District` FROM `city` WHERE `Population` > (SELECT AVG(`Population`) FROM `city`) GROUP BY `District`"
+5d971732,world_1,How many cities in each district have a population that is above the average population across all cities?,"SELECT COUNT(*), `District` FROM `city` WHERE `Population` > (SELECT AVG(`Population`) FROM `city`) GROUP BY `District`"
+1a2adb49,world_1,Find the government form name and total population for each government form whose average life expectancy is longer than 72.,"SELECT SUM(`Population`), `GovernmentForm` FROM `country` GROUP BY `GovernmentForm` HAVING AVG(`LifeExpectancy`) > 72"
+1eb6c429,world_1,What are the different government forms and what is the total population of each for government forms that have an average life expectancy greater than 72?,"SELECT SUM(`Population`), `GovernmentForm` FROM `country` GROUP BY `GovernmentForm` HAVING AVG(`LifeExpectancy`) > 72"
+9e3ce879,world_1,Find the average life expectancy and total population for each continent where the average life expectancy is shorter than 72?,"SELECT SUM(`Population`), AVG(`LifeExpectancy`), `Continent` FROM `country` GROUP BY `Continent` HAVING AVG(`LifeExpectancy`) < 72"
+09865ede,world_1,"What are the different continents and the total popuation and average life expectancy corresponding to each, for continents that have an average life expectancy less than 72?","SELECT SUM(`Population`), AVG(`LifeExpectancy`), `Continent` FROM `country` GROUP BY `Continent` HAVING AVG(`LifeExpectancy`) < 72"
+125c6441,world_1,What are the names and areas of countries with the top 5 largest area?,"SELECT `Name`, `SurfaceArea` FROM `country` ORDER BY `SurfaceArea` DESC LIMIT 5"
+26b48acd,world_1,Return the names and surface areas of the 5 largest countries.,"SELECT `Name`, `SurfaceArea` FROM `country` ORDER BY `SurfaceArea` DESC LIMIT 5"
+ce835f4a,world_1,What are names of countries with the top 3 largest population?,SELECT `Name` FROM `country` ORDER BY `Population` DESC LIMIT 3
+4919a5ae,world_1,Return the names of the 3 most populated countries.,SELECT `Name` FROM `country` ORDER BY `Population` DESC LIMIT 3
+72ec644b,world_1,What are the names of the nations with the 3 lowest populations?,SELECT `Name` FROM `country` ORDER BY `Population` ASC LIMIT 3
+70c55e60,world_1,Return the names of the 3 countries with the fewest people.,SELECT `Name` FROM `country` ORDER BY `Population` ASC LIMIT 3
+23be1b98,world_1,how many countries are in Asia?,SELECT COUNT(*) FROM `country` WHERE `continent` = 'Asia'
+7c95526e,world_1,Count the number of countries in Asia.,SELECT COUNT(*) FROM `country` WHERE `continent` = 'Asia'
+45fcdb59,world_1,What are the names of the countries that are in the continent of Europe and have a population of 80000?,SELECT `Name` FROM `country` WHERE `continent` = 'Europe' AND `Population` = '80000'
+f35f032f,world_1,Give the names of countries that are in Europe and have a population equal to 80000.,SELECT `Name` FROM `country` WHERE `continent` = 'Europe' AND `Population` = '80000'
+194968f3,world_1,What is the total population and average area of countries in the continent of North America whose area is bigger than 3000 ?,"SELECT SUM(`population`), AVG(`surfacearea`) FROM `country` WHERE `continent` = 'north america' AND `surfacearea` > 3000"
+17459caa,world_1,What are the cities whose population is between 160000 and 900000?,SELECT `name` FROM `city` WHERE `Population` BETWEEN 160000 AND 900000
+351b8cf3,world_1,Return the names of cities that have a population between 160000 and 900000 .,SELECT `name` FROM `city` WHERE `population` BETWEEN 160000 AND 900000
+1f8a688f,world_1,Which language is spoken by the largest number of countries?,SELECT `LANGUAGE` FROM `countrylanguage` GROUP BY `LANGUAGE` ORDER BY COUNT(*) DESC LIMIT 1
+22ce5af8,world_1,Give the language that is spoken in the most countries.,SELECT `LANGUAGE` FROM `countrylanguage` GROUP BY `LANGUAGE` ORDER BY COUNT(*) DESC LIMIT 1
+1dbded02,wta_1,Find the total number of players.,SELECT COUNT(*) FROM `players`
+4bb3be42,wta_1,How many players are there?,SELECT COUNT(*) FROM `players`
+dcb74d59,wta_1,Find the total number of matches.,SELECT COUNT(*) FROM `matches`
+230a232a,wta_1,Count the number of matches.,SELECT COUNT(*) FROM `matches`
+21a52c86,wta_1,List the first name and birth date of all players from the country with code USA.,"SELECT `first_name`, `birth_date` FROM `players` WHERE `country_code` = 'USA'"
+381d1bd7,wta_1,What are the first names and birth dates of players from the USA?,"SELECT `first_name`, `birth_date` FROM `players` WHERE `country_code` = 'USA'"
+537d9835,wta_1,Find the average age of losers and winners of all matches.,"SELECT AVG(`loser_age`), AVG(`winner_age`) FROM `matches`"
+4fa02edc,wta_1,What are the average ages of losers and winners across matches?,"SELECT AVG(`loser_age`), AVG(`winner_age`) FROM `matches`"
+98ec88ac,wta_1,Find the average rank of winners in all matches.,SELECT AVG(`winner_rank`) FROM `matches`
+d6492bb1,wta_1,What is the average rank for winners in all matches?,SELECT AVG(`winner_rank`) FROM `matches`
+8e47b8dd,wta_1,Find the highest rank of losers in all matches.,SELECT MIN(`loser_rank`) FROM `matches`
+234bed49,wta_1,What is the best rank of losers across all matches?,SELECT MIN(`loser_rank`) FROM `matches`
+a5e9ee67,wta_1,find the number of distinct country codes of all players.,SELECT COUNT(DISTINCT `country_code`) FROM `players`
+d4f24a88,wta_1,How many distinct countries do players come from?,SELECT COUNT(DISTINCT `country_code`) FROM `players`
+404c4ffa,wta_1,Find the number of distinct name of losers.,SELECT COUNT(DISTINCT `loser_name`) FROM `matches`
+08b8916d,wta_1,How many different loser names are there?,SELECT COUNT(DISTINCT `loser_name`) FROM `matches`
+b9cfdad9,wta_1,Find the name of tourney that has more than 10 matches.,SELECT `tourney_name` FROM `matches` GROUP BY `tourney_name` HAVING COUNT(*) > 10
+2be83857,wta_1,What are the names of tournaments that have more than 10 matches?,SELECT `tourney_name` FROM `matches` GROUP BY `tourney_name` HAVING COUNT(*) > 10
+b73c0597,wta_1,List the number of all matches who played in years of 2013 or 2016.,SELECT COUNT(*) FROM `matches` WHERE `YEAR` = 2013 OR `YEAR` = 2016
+d569c86b,wta_1,How many matches were played in 2013 or 2016?,SELECT COUNT(*) FROM `matches` WHERE `YEAR` = 2013 OR `YEAR` = 2016
+3a5fcd00,wta_1,List the first and last name of all players in the order of birth date.,"SELECT `first_name`, `last_name` FROM `players` ORDER BY `birth_date`"
+029b284e,wta_1,"What are the full names of all players, sorted by birth date?","SELECT `first_name`, `last_name` FROM `players` ORDER BY `birth_date`"
+a8be0a1f,wta_1,List the first and last name of all players who are left / L hand in the order of birth date.,"SELECT `first_name`, `last_name` FROM `players` WHERE `hand` = 'L' ORDER BY `birth_date`"
+01c7b0af,wta_1,"What are the full names of all left handed players, in order of birth date?","SELECT `first_name`, `last_name` FROM `players` WHERE `hand` = 'L' ORDER BY `birth_date`"
+44388b25,wta_1,What is the first name and country code of the player with the most tours?,"SELECT `t1`.`country_code`, `t1`.`first_name` FROM `players` AS `t1` JOIN `rankings` AS `t2` ON `t1`.`player_id` = `t2`.`player_id` ORDER BY `t2`.`tours` DESC LIMIT 1"
+111d9f3c,wta_1,Find the year that has the most number of matches.,SELECT `YEAR` FROM `matches` GROUP BY `YEAR` ORDER BY COUNT(*) DESC LIMIT 1
+65656c6d,wta_1,Which year had the most matches?,SELECT `YEAR` FROM `matches` GROUP BY `YEAR` ORDER BY COUNT(*) DESC LIMIT 1
+7c331e8a,wta_1,Find the name of the winner who has the highest rank points and participated in the Australian Open tourney.,SELECT `winner_name` FROM `matches` WHERE `tourney_name` = 'Australian Open' ORDER BY `winner_rank_points` DESC LIMIT 1
+accaf9e1,wta_1,find the names of loser and winner who played in the match with greatest number of minutes.,"SELECT `winner_name`, `loser_name` FROM `matches` ORDER BY `minutes` DESC LIMIT 1"
+5fc7f65f,wta_1,What are the names of the winner and loser who played in the longest match?,"SELECT `winner_name`, `loser_name` FROM `matches` ORDER BY `minutes` DESC LIMIT 1"
+715f84e4,wta_1,find the number of players for each country.,"SELECT COUNT(*), `country_code` FROM `players` GROUP BY `country_code`"
+63efa820,wta_1,How many players are from each country?,"SELECT COUNT(*), `country_code` FROM `players` GROUP BY `country_code`"
+038bfa5b,wta_1,find the code of the country where has the greatest number of players.,SELECT `country_code` FROM `players` GROUP BY `country_code` ORDER BY COUNT(*) DESC LIMIT 1
+c7945396,wta_1,What is the code of the country with the most players?,SELECT `country_code` FROM `players` GROUP BY `country_code` ORDER BY COUNT(*) DESC LIMIT 1
+7d35bc89,wta_1,Find the codes of countries that have more than 50 players.,SELECT `country_code` FROM `players` GROUP BY `country_code` HAVING COUNT(*) > 50
+7f98a5fe,wta_1,What are the codes of countries with more than 50 players?,SELECT `country_code` FROM `players` GROUP BY `country_code` HAVING COUNT(*) > 50
+ed03c71c,wta_1,Find the total number of tours for each ranking date.,"SELECT SUM(`tours`), `ranking_date` FROM `rankings` GROUP BY `ranking_date`"
+0e92d595,wta_1,How many total tours were there for each ranking date?,"SELECT SUM(`tours`), `ranking_date` FROM `rankings` GROUP BY `ranking_date`"
+efc57975,wta_1,Find the number of matches happened in each year.,"SELECT COUNT(*), `YEAR` FROM `matches` GROUP BY `YEAR`"
+e66eab0e,wta_1,How many matches were played in each year?,"SELECT COUNT(*), `YEAR` FROM `matches` GROUP BY `YEAR`"
+290e4110,wta_1,How many different winners both participated in the WTA Championships and were left handed?,SELECT COUNT(DISTINCT `winner_name`) FROM `matches` WHERE `tourney_name` = 'WTA Championships' AND `winner_hand` = 'L'
+ae04fd71,wta_1,Find the number of left handed winners who participated in the WTA Championships.,SELECT COUNT(DISTINCT `winner_name`) FROM `matches` WHERE `tourney_name` = 'WTA Championships' AND `winner_hand` = 'L'
+6ab25359,wta_1,"Find the first name, country code and birth date of the winner who has the highest rank points in all matches.","SELECT `t1`.`first_name`, `t1`.`country_code`, `t1`.`birth_date` FROM `players` AS `t1` JOIN `matches` AS `t2` ON `t1`.`player_id` = `t2`.`winner_id` ORDER BY `t2`.`winner_rank_points` DESC LIMIT 1"
+bbefe9e3,wta_1,Find the number of players for each hand type.,"SELECT COUNT(*), `hand` FROM `players` GROUP BY `hand`"
+170c8381,wta_1,How many players are there for each hand type?,"SELECT COUNT(*), `hand` FROM `players` GROUP BY `hand`"

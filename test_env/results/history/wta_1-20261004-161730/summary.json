@@ -1,0 +1,39 @@
+{
+  "run": 1,
+  "mode": "full-schema",
+  "schema_retriever": "off",
+  "started_at": "2026-10-04 16:17:30",
+  "total_questions": 45,
+  "evaluated": 26,
+  "gold_unexecutable": 0,
+  "crashed": 19,
+  "execution_accuracy": 0.8846,
+  "syntax_pass_rate": 1.0,
+  "total_elapsed_s": 1244.3,
+  "avg_latency_s": 37.43,
+  "tokens": {
+    "prompt": 225314,
+    "completion": 51598,
+    "total": 276912
+  },
+  "intent_dist": {
+    "query": 26
+  },
+  "error_kinds": {},
+  "correction_triggered": 0,
+  "correction_rescued": 0,
+  "perf_optimized_questions": 0,
+  "perf_optimization_rounds": 0,
+  "skill_used_questions": 26,
+  "tool_used_questions": 0,
+  "capability_granted_total": 37,
+  "capability_denied_total": 0,
+  "accuracy_by_db": {
+    "wta_1": {
+      "n": 26,
+      "pass": 23,
+      "acc": 0.8846,
+      "tables_retrieval": null
+    }
+  }
+}

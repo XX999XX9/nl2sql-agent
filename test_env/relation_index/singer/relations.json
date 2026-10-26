@@ -1,0 +1,1 @@
+{"fingerprint": "990966dd099b4dabd03382f3b596dda4", "built_at": 1789961371.4797246, "edges": [{"child_table": "song", "child_column": "Singer_ID", "parent_table": "singer", "parent_column": "Singer_ID", "source": "explicit", "confidence": 1.0}]}

@@ -2,7 +2,8 @@ version: "3"
 
 services:
   redis:
-    image: redis:7-alpine
+    image: redis:8
+    # Redis 8 内置 RedisJSON / RediSearch，官方 langgraph-checkpoint-redis 直接可用；
     # appendonly yes：检查点与会话记录是唯一事实源，必须落盘（AOF）而不是只存在内存里
     command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
     ports:

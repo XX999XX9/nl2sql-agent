@@ -1,0 +1,1 @@
+{"fingerprint": "c7f0cd65c41d2014b4af83f579451315", "built_at": 1789934729.815197, "edges": [{"child_table": "poker_player", "child_column": "People_ID", "parent_table": "people", "parent_column": "People_ID", "source": "explicit", "confidence": 1.0}]}

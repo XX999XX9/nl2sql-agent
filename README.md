@@ -6,14 +6,15 @@
 - 前端：原生 HTML/CSS/JS（无框架），本地引入 marked / highlight.js / sql-formatter
 - 模型：百炼 DashScope（OpenAI 兼容模式），LLM 与 Embedding 均可配置；主模型失败自动降级备用模型
 - 数据库：MySQL 8.x（只读账号）
-- 评测：内置 Spider 基准自动化评测框架 + 可视化评测日志审查台（`test_env/`）
+- 存储：Redis 8.x（LangGraph 官方检查点 `langgraph-checkpoint-redis`，依赖内置 RedisJSON / RediSearch 模块）；检查点是唯一事实源
+- 评测：内置 Spider 基准自动化评测框架 + 可视化评测日志审查台（`test_env/`，脚本、测试数据与历史结果随仓库分发）
 
 ## 功能特性
 
 ### 对话查询
 - 自然语言 → SQL → 结果表格（本地/远端分页、CSV 导出）
 - 多轮省略式追问：上轮 SQL 显式注入 Prompt（"查所有商品"→"按月份分组"→"只看库存高于100的"逐轮递进）
-- 会话管理：新建/切换/回放/删除；持久化到 `backend/data/session_store.json`，重启不丢
+- 会话管理：新建/切换/回放/删除；会话与轮次由 LangGraph 检查点（Redis）承载，Redis 目录键只存 id/标题/时间，重启不丢且不自动过期
 
 ### 两阶段生成与歧义澄清
 - **第一阶段表字段识别**（`table_selector.py`）：LLM 在全量表结构上只输出精简 JSON（needed 确定使用的表+字段 / maybe 可能使用的表），服务端按真实 Schema 反查补全其余字段（不信任模型清单），第二阶段只收裁剪后的上下文；解析失败回退全量 Schema，不阻断
@@ -68,6 +69,16 @@
 - SSE 逐步推送：意图 / 澄清 / SQL / 执行中 / 纠错中（语义/性能，含轮次与原因）/ 结果 / 解读（含裁判标签）/ 统计
 - 单卡片聚合回复：「回复 / 查询结果」双视图切换，底部耗时 token 摘要行（悬停看分步明细）
 
+### 多用户与访问控制
+- 登录只输入用户名（无密码），身份存 `localStorage`，所有请求经 `X-User-Id` 请求头携带；后端据此隔离会话、检查点线程与 Trace（线程 id = `user_id:session_id`）
+- 顶栏入口统一为纯文字：映射表 / 日志 / 切换用户；Trace 入口在评测日志页右上角
+- 评测日志审查台需输入访问口令（当前固定 `666`），验证结果存 `sessionStorage`，同一标签页内进入 Trace 及返回不再重复验证
+
+### 事实源与 Trace
+- 唯一事实源是 LangGraph 检查点（Redis + 官方 `RedisSaver`）：会话记录、Trace、断点续跑都从同一份检查点投影，Redis 目录键不存问答正文，避免双写不一致
+- **会话视图**投影检查点状态中的 `turns`（DeltaChannel 增量通道，只保留提问与回答）；**Trace 视图**投影同一线程的检查点历史（节点、状态、事件、下一步）
+- 检查点写入开启 AOF 落盘；每轮 SSE `done` 事件回传 `turn_id`，供前端"引用历史轮"使用
+
 ### 评测体系（`test_env/`，详见目录内注释）
 - Spider 682 题 / 20 库批量评测：按库分组、断点续跑、冒烟限量、全量 Schema vs 向量检索两轮对比报告、gold 结果跨轮缓存、失败题一键重跑（run_fail.py）
 - 执行准确率口径：值规范化（Decimal 控精度、日期转 ISO）后无序 multiset 比对，行序无关；列数相同前提下仅列顺序不同判等价（明细打 col_reordered 标记可审计）；评测环境 pred/gold 两侧均不截断
@@ -89,9 +100,10 @@ nl2sql-agent/
 │   │   ├── config.py                # 端口/调试/托管开关
 │   │   ├── api/
 │   │   │   ├── deps.py              # 全局单例（pipeline/会话/缓存/优化器）
-│   │   │   └── routes/              # chat / result / session / schema_info / prompt_optimize / eval_logs
+│   │   │   └── routes/              # chat / result / session / traces / schema_info / prompt_optimize / eval_logs
 │   │   ├── schemas/                 # Pydantic 请求响应模型 + SSE 事件协议定义
 │   │   ├── nl2sql/                  # 核心模块（见下文），含 capabilities/ 能力治理子包
+│   │   ├── persistence/             # 事实源接入：redis_store（连接/键空间）/ redis_checkpointer（官方 RedisSaver 适配）/ store（会话与 Trace 投影）
 │   │   ├── model/factory.py         # LLM / Embedding 客户端工厂（空正文扩容+降级模型）
 │   │   ├── optimizer/               # 提示词优化（optimizer/evaluator/strategies）
 │   │   ├── formatter/               # 输出规范化（normalizer/output_formatter/templates）
@@ -99,27 +111,32 @@ nl2sql-agent/
 │   │   └── utils/                   # 路径/日志/配置/文件工具
 │   ├── config/                      # YAML 配置（含 gate_rules.yml 能力准入规则，见下文）
 │   ├── prompts/                     # 提示词模板（.txt）+ skills/ SQL 写作专项规则（5 个 .md）
-│   ├── data/                        # 运行时数据（不入库）：session_store / schema_store / relation_store
+│   ├── data/                        # 运行时数据（不入库）：schema_store / relation_store（会话与 Trace 已迁至 Redis，session_store.json 为遗留文件）
 │   ├── logs/                        # 运行日志（按日期滚动）+ gate_audit.jsonl 能力裁决审计
 │   └── run.py                       # uvicorn 启动入口
 ├── frontend/
-│   ├── index.html                   # 对话页
-│   ├── eval_logs.html               # 评测日志审查台（错误筛选 + gold/pred 左右对比）
+│   ├── login.html                   # 登录页（仅输入用户名）
+│   ├── index.html                   # 对话页（顶栏：映射表 / 日志 / 切换用户）
+│   ├── eval_logs.html               # 评测日志审查台（口令门 + 错误筛选 + gold/pred 左右对比，右上角 Trace 入口）
+│   ├── traces.html                  # Trace 页（检查点历史：节点/状态/事件/下一步）
 │   ├── prompt_optimize.html         # 提示词优化工作台
 │   ├── static/css|js|libs           # 样式/脚本/本地第三方库
 │   └── nginx.conf                   # 生产静态托管 + /api 反代
 ├── scripts/                         # start_backend / start_frontend / init_schema_cache
-├── test_env/                        # 本地 Spider 基准评测环境（run_eval/run_fail/测试服务脚本/结果，不入库）
+├── test_env/                        # 本地 Spider 基准评测环境（run_eval/run_fail/测试服务脚本/历史结果；脚本与结果入库）
+├── test_queries.csv                 # Spider 测试集（682 题 / 20 库）
+├── docs/                            # 项目文档（项目说明书、链路图、改造报告等，多数不入库）
 ├── docker-compose.yml
-└── 项目说明书.md / architecture.txt  # 架构文档
+└── architecture.txt                 # 文件级架构地图
 ```
 
-> 注：`test_env/`（Spider 评测脚本、测试凭据、评测结果与本地生成的向量/关系索引）、`backend/data/`（运行时数据）、`backend/.env`（密钥）均在 `.gitignore` 中；克隆仓库后需自建 `.env` 配置，评测数据不随仓库分发。
+> 注：`backend/data/`（运行时数据与本地生成的向量/关系索引）、`backend/.env`（密钥）、`test_env/.env.test`（评测凭据）在 `.gitignore` 中；`test_env/` 的评测脚本、测试数据与历史结果随仓库分发。
 
 ## 环境要求
 
 - Python 3.10+（推荐 conda 环境）
 - MySQL 8.x（只读账号）
+- Redis 8.x（需内置 RedisJSON / RediSearch；`docker-compose up -d redis` 或 apt 源安装 Redis 8 均可）
 - 百炼/DashScope API Key
 
 ## 配置详解
@@ -151,6 +168,19 @@ FLUSH PRIVILEGES;
 ```
 
 > 注意：MySQL 按 `用户@来源IP` 匹配。应用走 TCP 连接，来源是机器 IP；用 `'%'` 或对应 IP 建账号，仅建 `@localhost` 会 Access denied。
+
+### Redis（检查点事实源）
+
+```bash
+# 方式一：Docker（仓库自带 compose，镜像 redis:8，AOF 落盘）
+docker-compose up -d redis
+
+# 方式二：本机安装 Redis 8 后直接启动（需 appendonly 落盘）
+redis-server --appendonly yes
+```
+
+验证模块就绪：`redis-cli MODULE LIST` 应包含 `ReJSON`、`search`，且 `redis-cli FT._LIST` 可执行（官方检查点依赖这两个模块建索引）。
+连接地址与前缀通过 `NL2SQL_REDIS_URL`、`NL2SQL_REDIS_PREFIX` 覆盖；旧版 Redis 6/7（无上述模块）无法运行。
 
 ### backend/config/*.yml
 
@@ -188,6 +218,9 @@ FLUSH PRIVILEGES;
 | NL2SQL_SQL_EXPLAINER | 未设置（取 features=true） | 业务解读+裁判开关：on/off（评测脚本默认 off） |
 | NL2SQL_EXPLAIN_GATE | 未设置（取 features=true） | EXPLAIN 性能门禁开关：on/off（评测脚本默认 off） |
 | NL2SQL_CLARIFICATION | 未设置（取 features=true） | 歧义澄清反问开关：on/off（评测脚本默认 off） |
+| NL2SQL_REDIS_URL | redis://localhost:6379/0 | 检查点与会话目录所在 Redis |
+| NL2SQL_REDIS_PREFIX | nl2sql | Redis 键空间前缀（官方检查点前缀不能含冒号） |
+| NL2SQL_CHECKPOINTING | 未设置（开启） | 检查点开关；off 时返回 None（批量评测不需要 Trace 时可关） |
 | BAILIAN_FALLBACK_MODEL | qwen-plus | 降级模型：主模型异常/扩容后仍空响应时整体重试一次 |
 
 ## 启动服务
@@ -230,8 +263,10 @@ bash scripts/init_schema_cache.sh
 
 | 入口 | 地址 |
 |---|---|
+| 登录页 | http://localhost:8002/login.html （未登录访问其他页面自动跳转） |
 | 对话界面 | http://localhost:8002 |
-| 评测日志审查台 | http://localhost:8002/eval_logs.html |
+| 评测日志审查台 | http://localhost:8002/eval_logs.html （需口令 666） |
+| Trace 页 | http://localhost:8002/traces.html?run_id=... （从评测日志页右上角进入） |
 | 提示词优化工作台 | http://localhost:8002/prompt_optimize.html |
 | API 文档（Swagger） | http://localhost:8002/docs |
 | 健康检查 | http://localhost:8002/health |
@@ -247,6 +282,8 @@ bash scripts/init_schema_cache.sh
 | GET | /api/session | 会话列表 |
 | GET | /api/session/{id} | 会话详情（含历史轮次，回放用） |
 | DELETE | /api/session/{id} | 删除会话 |
+| GET | /api/traces?session_id= | 该用户的运行（Trace）列表 |
+| GET | /api/traces/{run_id} | 单次运行的检查点历史投影（节点/状态/事件/下一步） |
 | GET | /api/schema/tables | 数据字典：表结构 |
 | GET | /api/schema/semantic-map | 数据字典：语义映射 |
 | GET | /api/prompt_optimize/strategies | 优化策略列表 |
@@ -293,5 +330,7 @@ data: {"type": "done",          "data": {"turn_id?", "clarify_id?", "need_clarif
 
 - **页面空白/样式丢失**：HTML 已设 no-cache；如遇缓存请 Ctrl+F5 强刷。
 - **数据库 Access denied**：见上文"只读账号建账"的来源 IP 说明。
-- **会话丢失**：会话持久化在 `backend/data/session_store.json`；若删除该文件或更换 DB_NAME 则重建。
+- **会话丢失**：会话与轮次存在 Redis 检查点里；清空 Redis 或更换 `NL2SQL_REDIS_PREFIX` 会重建，旧数据不可恢复。
+- **历史会话/Trace 打不开**：本轮已从自研检查点切换到官方 `langgraph-checkpoint-redis`，键布局不兼容，切换前产生的会话与 Trace 无法读取（建议清掉旧 `nl2sql:ckpt:*` / `nl2sql:writes:*`）。
+- **Redis 启动报缺少索引/模块**：确认使用 Redis 8（内置 ReJSON/search），旧版 Redis 6/7 无法加载官方检查点依赖的模块。
 - **大库检索未生效**：确认 `features.schema_retriever: true` 且已跑预热脚本；表数 < threshold 时有意走全量。

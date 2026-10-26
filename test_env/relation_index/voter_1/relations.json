@@ -1,0 +1,1 @@
+{"fingerprint": "dfe941f6aa78d461eb89d3360b3252c5", "built_at": 1789962642.8163962, "edges": [{"child_table": "VOTES", "child_column": "contestant_number", "parent_table": "CONTESTANTS", "parent_column": "contestant_number", "source": "explicit", "confidence": 1.0}]}

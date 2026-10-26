@@ -7,15 +7,23 @@ nl2sql-agent/
 │   │   ├── config.py                       # 服务配置：从环境变量读取端口(NL2SQL_PORT=8002)、调试热重载(NL2SQL_DEBUG)、是否托管前端(NL2SQL_SERVE_FRONTEND)；功能模块开关在 config/agent.yml features 下，不在此处
 │   │   │
 │   │   ├── api/                            # API 接口层
-│   │   ├── __init__.py                     # 路由包初始化（空）
-│   │   ├── deps.py                         # 依赖注入：lru_cache 全局单例（ModelFactory/ConversationManager/ResultCache/NL2SQLPipeline/PromptOptimizer），路由经 Depends 使用；Pipeline 注入同一会话管理器与结果缓存实例保证共享状态
+│   │   │   ├── __init__.py                 # 路由包初始化（空）
+│   │   │   ├── deps.py                     # 依赖注入：lru_cache 全局单例（ModelFactory/SessionRunStore/RedisCheckpointSaver/Projection/ConversationManager/ResultCache/NL2SQLPipeline/PromptOptimizer）；get_user_id 解析 X-User-Id 请求头（URL 编码，剔除冒号与控制字符）实现用户隔离；Projection 绑定同一张编译后的图读取检查点历史
 │   │   │   └── routes/
 │   │   │       ├── __init__.py             # 路由注册汇总，供main.py统一include_router；prompt_optimize 路由受 agent.yml features.prompt_optimize 开关控制（关闭时不注册）
 │   │   │       ├── chat.py                 # 对话接口双出口共享同一pipeline：POST /api/chat 非流式JSON聚合结果；POST /api/chat/stream SSE流式逐事件推送（intent→sql→executing→correcting→explanation→result→usage→done/error）
 │   │   │       ├── result.py               # 结果接口：按query_id从结果缓存分页拉取数据（GET /api/result/{query_id}?page&page_size），支撑前端翻页
-│   │   │       ├── session.py              # 会话接口：创建/列表/详情/删除多轮对话会话（POST/GET/GET/{id}/DELETE /api/session）
+│   │   │       ├── session.py              # 会话接口：创建/列表/详情/删除多轮对话会话（POST/GET/GET/{id}/DELETE /api/session），按用户隔离
+│   │   │       ├── traces.py               # Trace 接口：GET /api/traces（按会话列运行）、GET /api/traces/{run_id}（检查点历史投影：节点/状态/事件/下一步）
+│   │   │       ├── eval_logs.py            # 评测日志审查台接口：GET /api/eval/runs（latest/fail_tests/all_history/history 四组）、GET /api/eval/run（错误分类与库名筛选、结果集瘦身，路径约束防穿越）
 │   │   │       ├── schema_info.py          # 元信息接口：返回已接入的表列表与字段结构（/api/schema/tables）、语义映射（/api/schema/semantic-map），供前端"数据字典"面板展示
 │   │   │       └── prompt_optimize.py      # 提示词优化接口（5端点）：策略列表/文件列表/读文件/提交优化（可选A/B评估）/写回提示词文件（自动.bak备份，受allow_write_back控制）
+│   │   │
+│   │   ├── persistence/                    # 事实源接入层（LangGraph 检查点 + 目录索引投影）
+│   │   │   ├── __init__.py                 # persistence 包初始化
+│   │   │   ├── redis_store.py              # Redis 基础设施：NL2SQL_REDIS_URL 连接（二进制模式）、NL2SQL_REDIS_PREFIX 键空间、会话/运行/澄清/线程键命名；thread_id_for(user,session)={user_id}:{session_id} 天然隔离多用户
+│   │   │   ├── redis_checkpointer.py       # RedisCheckpointSaver：官方 langgraph-checkpoint-redis 的 RedisSaver 适配层——复用项目连接与前缀、setup() 幂等建 RediSearch 索引、msgpack 白名单（PipelineResult/TurnTracker）、补 has_writes 标记并还原 DeltaChannel 的 __delta_snapshot__（官方 0.5.2 在当前 LangGraph 写入顺序下的增量回放修复）
+│   │   │   └── store.py                    # SessionRunStore + Projection：Redis 只存会话/运行目录（id/标题/时间/状态）；会话视图投影检查点 turns，Trace 视图投影同线程 checkpoints（节点、状态、事件差量、下一步），单一事实源避免双写
 │   │   │
 │   │   ├── schemas/                        # Pydantic 数据模型层（请求/响应结构定义与校验）
 │   │   │   ├── __init__.py                 # schemas包初始化（空）
@@ -30,7 +38,8 @@ nl2sql-agent/
 │   │   │   ├── __init__.py                 # 暴露NL2SQLPipeline统一编排入口
 │   │   │   ├── pipeline.py                 # 流水线编排器（LangGraph StateGraph）：意图分类分流 → query：上下文增强（多轮上下文+Schema检索+术语映射+值链接+候选表沿关系图谱1跳邻接扩展）→SQL生成→静态校验→安全守卫→JOIN扇出检测→执行→0行值缺失诊断→自动纠错循环（q_validate/q_fanout⇄q_correct，最多N轮，扇出纠错只触发一次防死循环）→结果缓存→解释生成；dml：专用模板仅生成不执行；meta：基于Schema直接LLM回答；三分支汇合finalize（usage统计+记轮次+done）。节点+条件边由LangGraph调度，每步经TurnTracker埋点，节点内经custom流通道_emit SSE事件，iter_run透出事件流、run()消费返回聚合结果（单一事实来源）
 │   │   │   ├── intent_classifier.py        # 意图分类前置：区分 查询(query)/增删改(dml)/元信息(meta) 三类；关键词正则快路径（明显诉求不调LLM）+ LLM兜底，任何异常兜底query
-│   │   │   ├── conversation.py             # 多轮对话上下文管理：保存每轮{问题,SQL,涉及表,意图,解释,结果快照,usage}；追问时将上一轮SQL显式注入Prompt，支持"查今年销售额"→"按月份分组"类省略式追问；last_tables供多轮表保留；JSON文件持久化（data/session_store.json，服务重启不丢），会话TTL 24h过期清理
+│   │   │   ├── conversation.py             # 多轮会话视图：事实源为检查点状态中的 turns（DeltaChannel 增量追加），本模块只读投影；追问时显式注入上一轮 SQL 与涉及表，支持省略式追问；Redis 仅存会话目录与人工澄清现场（clarify_* 30 分钟 TTL）；删除会话时同步 delete_thread 清理检查点，会话本身不自动过期
+│   │   │   ├── table_selector.py           # 两阶段生成第一阶段：全量表结构下让 LLM 只输出精简 JSON（needed 表+use_columns / maybe 表 / need_clarification+questions），服务端按真实 Schema 反查补全 other_columns 与 excluded、做幻觉白名单清洗；解析失败或协议不合法回退全量 Schema，不阻断生成
 │   │   │   ├── schema_manager.py           # Schema自动解析：读取information_schema的表名/字段/类型/主键索引/注释（含REFERENTIAL_CONSTRAINTS+KEY_COLUMN_USAGE显式外键查询，产出{table,column,ref_table,ref_column}），结构化为内部元数据，拼装Prompt上下文文本；refresh()手动刷新（配置schema_refresh_interval定时刷新预留未接线）；schema_fingerprint()指纹（含外键）供检索器/关系图谱检测结构变更自动重建；get_foreign_keys/all_foreign_keys/get_primary_keys供关系图谱消费；build_context_for_tables()限定表集合拼接
 │   │   │   ├── schema_retriever.py         # Schema向量检索（大库场景，features.schema_retriever开关，默认关）：表名/字段/注释向量化入Chroma持久索引，提问时检索Top-K相关表注入Prompt；小库（表数<threshold）自动退化全量；指纹变化自动重建；快照指纹一致时跳过重复embedding；任何失败返回None走全量不阻断主链路
 │   │   │   ├── relation_graph.py           # 表关联关系图谱（features.relation_graph开关，默认开）：三级数据源建图——①显式外键（100%可信）②严格命名约定推断（xxx_id列→xxx表主键/同名列恰一端主键，排除name/status等通用列）③推断边真实数据采样JOIN验证（200行采样、匹配率≥5%保留，剔除巧合重合的臆想边，验证通道整体失败仅保留显式FK）；RelationEdge有向存储child多端→parent一端；落盘data/relation_store/relations.json按schema指纹失效；查询能力：build_context_for_tables生成Prompt【表关联关系】区块（贪心BFS连通候选表）、neighbors 1跳邻接扩展召回、shortest_path BFS最短JOIN路径、is_many_to_one扇出方向判断、unknown_join_warnings解析JOIN ON是否用已知关联键（仅告警）；任何异常降级空图不阻断主链路
@@ -40,10 +49,22 @@ nl2sql-agent/
 │   │   │   ├── sql_validator.py            # SQL静态校验：sqlglot AST解析——多条语句拼接拦截、无ON/USING的JOIN笛卡尔积拦截（features.join_static_check开关，逗号连接FROM a,b同样拦截，显式CROSS/NATURAL JOIN意图明确放行，错误kind=join回喂纠错）、表名/字段名真实存在校验（防幻觉表/字段，CTE名视为合法表，别名/派生列跳过静态验证）；失败产出结构化错误（kind: syntax/table/column/join）供纠错链路回喂
 │   │   │   ├── sql_guard.py                # 安全守卫：关键词粗筛（含注释剥离防绕过）+ AST细筛（解析失败/多语句/非SELECT拦截）双重过滤；SELECT自动追加强制LIMIT（forced_limit）；与数据库只读账号形成双保险
 │   │   │   ├── fanout_checker.py           # JOIN扇出检测（features.fanout_check总开关+nl2sql.yml fanout.mode=off/static/dynamic）：关系图谱给出多对一方向后做AST风险识别——全局COUNT(*)与一端表列SUM/AVG危险（GROUP BY一端主键时的COUNT(*)属每组计数放行），COUNT/SUM(DISTINCT)与多端列聚合安全；static零数据库开销产中文风险提示，dynamic再执行AST改写的COUNT(*) vs COUNT(DISTINCT驱动表主键)计数对比确认放大倍数；无法分析（UNION/派生表/复合主键）一律放行；只触发一次纠错、不直接终止查询
+│   │   │   ├── explain_gate.py             # EXPLAIN 性能门禁（features.explain_gate）：执行前跑 EXPLAIN，仅当真实表 type=ALL 且 key=NULL 且估算行数≥阈值时拦截；把执行计划与真实索引名回喂 LLM 做性能重写，opt_rounds 独立计数（≤2，不占纠错轮次），第 3 次仍命中也放行；EXPLAIN 或重写失败一律放行不阻断
 │   │   │   ├── sql_executor.py             # SQL执行：SQLAlchemy连接池+PyMySQL、SET max_execution_time超时控制、错误分类（syntax/permission/timeout/other供纠错消费）、结果行数截断（result_row_limit）与行数据规范化（datetime→ISO、Decimal→float）；截断时COUNT(*)包装查真实总行数（未截断total=-1由pipeline填行数）
 │   │   │   ├── result_cache.py             # 结果缓存：query_id→结果集（LRU容量50+TTL 30分钟淘汰），get_page分页读取支撑前端翻页与CSV导出；由pipeline执行成功后写入
 │   │   │   ├── self_corrector.py           # 自动纠错链路（features.self_correction开关）：诊断+回喂重写——执行/校验失败（含笛卡尔积kind=join、JOIN扇出风险）回喂错误重写SQL，rewrite()接收候选表以注入关系键区块；diagnose_zero_row诊断0行结果中WHERE等值条件值不在库采样值中（合法0行不触发），值缺失时把该列真实取值一并回喂让模型改用正确值；每轮重写产物仍需过校验+守卫；最多N轮（nl2sql.yml correction.max_rounds）
-│   │   │   └── sql_explainer.py            # SQL解释生成：调用LLM将最终SQL翻译为业务化中文阐释（用到的表/条件/聚合/排序）；失败返回空串不阻断主链路（解释是增益能力）
+│   │   │   ├── sql_explainer.py            # SQL解释生成：调用LLM将最终SQL翻译为业务化中文阐释（用到的表/条件/聚合/排序），并按白名单输出 conform/risk/unknown 一致性裁判标签；features.sql_explainer 可关闭，失败返回空串不阻断主链路
+│   │   │   └── capabilities/               # Agent 能力治理子包（工具与 Skill 的唯一入口）
+│   │   │       ├── registry.py             # 能力注册表：工具（get_table_schema）与 Skill（JOIN/聚合/Top-N/集合差/日期）声明、风险等级与官方风险值
+│   │   │       ├── rules.py                # 声明式规则引擎：读取 config/gate_rules.yml，按 priority 升序匹配，条件不匹配/未知键跳过，产出 allow/deny/ask 裁决
+│   │   │       ├── gate.py                 # SkillToolGate：默认拒绝 + fail-closed，按 kind:name+参数哈希签发 Grant（决策 ID/TTL），同参重复申请 R429-LOOP-GUARD
+│   │   │       ├── layer.py                # 统一包装层：工具只能经此层注册与调用，代码层面杜绝旁路
+│   │   │       ├── orchestrator.py         # 能力轮次编排：max_cap_rounds 封顶（末轮强制忽略工具直接出 SQL），有界终止
+│   │   │       ├── protocol.py             # 能力申请/裁决协议模型：skills_requested/tools_requested/granted/denied/malformed
+│   │   │       ├── skills.py               # Skill 内容加载与注入（prompts/skills/*.md）
+│   │   │       ├── tools.py                # 工具实现：get_table_schema 仅取元数据（表/列/类型/键/注释/外键），单次≤20 张并二次校验存在性
+│   │   │       ├── approval.py             # 人工审批预埋：action=ask 规则，approval_enabled 关闭时降级为 R403-APPROVAL-OFF 拒绝
+│   │   │       └── audit.py                # 审计：每条请求的裁决、命中规则 ID、条件与原因写入 logs/gate_audit_YYYYMMDD.jsonl
 │   │   │
 │   │   ├── model/                          # 模型层
 │   │   │   ├── __init__.py                 # model包初始化（空）
@@ -75,9 +96,10 @@ nl2sql-agent/
 │   │   │
 │   ├── config/                             # 配置文件目录（YAML格式，敏感值经${VAR}从.env插值）
 │   │   ├── database.yml                    # 数据库配置：MySQL只读账号连接、连接池(pool_size/max_overflow/pool_recycle)、执行超时(30s)、强制LIMIT(1000)、结果截断行数(1000)、Schema刷新周期(schema_refresh_interval预留未接线)
-│   │   ├── nl2sql.yml                      # NL2SQL配置：correction.max_rounds纠错最大轮数、schema_retriever.top_k检索表数/threshold小库退化阈值、relation.infer_by_naming/verify_inferred关系图谱命名推断与采样验证开关、fanout.mode扇出检测模式(off/static/dynamic)、result.truncate_rows(预留，实际读database.yml result_row_limit)
+│   │   ├── nl2sql.yml                      # NL2SQL配置：correction.max_rounds纠错最大轮数、schema_retriever.top_k检索表数/threshold小库退化阈值、relation.infer_by_naming/verify_inferred关系图谱命名推断与采样验证开关、fanout.mode扇出检测模式(off/static/dynamic)、explain.large_table_rows大表阈值/max_opt_rounds性能优化轮次、capabilities.max_cap_rounds能力申请轮次封顶、result.truncate_rows(预留，实际读database.yml result_row_limit)
 │   │   ├── semantic_map.yml                # 语义映射配置：业务术语→表/字段/聚合/条件四类映射表
-│   │   ├── agent.yml                       # Agent配置：llm.*(模型/温度/max_tokens/超时)、embedding.*(百炼text-embedding-v3)、features九开关（metrics_enabled/intent_classifier/value_linker/schema_retriever/self_correction/prompt_optimize + JOIN治理三开关relation_graph/join_static_check/fanout_check）
+│   │   ├── agent.yml                       # Agent配置：llm.*(模型/温度/max_tokens/超时)、embedding.*(百炼text-embedding-v3)、features十二开关（metrics_enabled/intent_classifier/value_linker/schema_retriever/self_correction/prompt_optimize + JOIN治理三开关relation_graph/join_static_check/fanout_check + explain_gate/sql_explainer/clarification）
+│   │   ├── gate_rules.yml                  # 能力准入规则：声明式规则（条件+动作+优先级）+ meta.fail_closed 默认拒绝 / approval_enabled 人工审批预埋
 │   │   └── optimizer.yml                   # 优化模块配置：eval_cases评估用例数(3)、allow_write_back写回开关(default_strategy预留未接线)
 │   │
 │   ├── prompts/                            # 提示词模板目录（优化工作台可写回，.bak自动备份）
@@ -86,11 +108,15 @@ nl2sql-agent/
 │   │   ├── dml_prompt.txt                  # DML生成提示词：写操作专用模板（仅生成不执行分支）
 │   │   ├── intent_prompt.txt               # 意图分类提示词：{question}占位，query/dml/meta类别判定
 │   │   ├── correct_prompt.txt              # 纠错重写提示词：{schema_context}{relation_context}{question}{sql}{error}占位，含JOIN关联键/LEFT JOIN/扇出纠错指引，错误回喂重写指令
-│   │   ├── explain_prompt.txt              # SQL解释提示词：{schema_context}{sql}占位，面向业务用户的阐释风格
+│   │   ├── explain_prompt.txt              # SQL解释提示词：{schema_context}{sql}占位，面向业务用户的阐释风格，并输出 conform/risk 裁判标签
+│   │   ├── table_select_prompt.txt         # 表字段识别提示词：仅输出 needed/maybe 精简 JSON（可含需要澄清的问题）
+│   │   ├── fanout_judge_prompt.txt         # JOIN 扇出风险 LLM 裁决提示词：输出 {verdict, reason, sql}
+│   │   ├── skills/                         # SQL 写作专项规则（join/aggregate/topn/set_difference/datetime），按能力申请后注入
 │   │   └── prompt_optimize_prompt.txt      # 元提示词：指导LLM优化提示词的提示词（受保护不可被覆盖）
 │   │
-│   ├── data/                               # 运行时数据目录（整体gitignore）
-│   │   ├── session_store.json              # 会话持久化存储（JSON原子写，含全部轮次回放数据）
+│   ├── data/                               # 运行时数据目录（整体gitignore；会话与 Trace 已迁至 Redis 检查点）
+│   │   ├── relation_store/                 # 关系图谱快照 relations.json（按 Schema 指纹失效，全量/单库/失败复测共享）
+│   │   ├── session_store.json              # （遗留文件，新版本不再读写；事实源见 persistence/）
 │   │   ├── schema_store/                   # Schema向量检索持久化：chroma_index/(Chroma索引) + snapshot.json(指纹快照，命中跳过重建)
 │   │   ├── chroma_db/                      # （遗留空目录，实际索引在schema_store/chroma_index，可删除）
 │   │   └── md5_hex.txt                     # （遗留文件，当前无代码引用，可删除）
@@ -99,11 +125,14 @@ nl2sql-agent/
 │   │   └── agent.log                       # 主日志（按日轮转保留30天）
 │   │
 │   ├── run.py                              # 启动脚本：以uvicorn启动FastAPI（host/port/debug从环境变量读取）
-│   ├── requirements.txt                    # 后端依赖：fastapi、uvicorn、pydantic、sqlglot、sqlalchemy+pymysql/aiomysql、openai、langgraph（流水线编排）、chromadb、tiktoken、PyYAML
+│   ├── requirements.txt                    # 后端依赖：fastapi、uvicorn、pydantic、sqlglot、sqlalchemy+pymysql/aiomysql、openai、langgraph（流水线编排）、langgraph-checkpoint-redis（官方检查点）、redis、chromadb、tiktoken、PyYAML
 │   └── Dockerfile                          # （待补充：docker-compose.yml backend服务引用./backend构建，但Dockerfile尚未提供）
 │
 ├── frontend/                               # 前端工程根目录（HTML/CSS/JS原生实现，无构建步骤）
-│   ├── index.html                          # 主页面：三栏布局（会话列表/对话区/数据字典）+顶栏开合按钮+输入区，按依赖序引入库与模块脚本
+│   ├── login.html                          # 登录页：仅输入用户名（localStorage），支持 next 回跳
+│   ├── index.html                          # 主页面：三栏布局（会话列表/对话区/数据字典）+顶栏（映射表/日志/切换用户）+输入区，按依赖序引入库与模块脚本
+│   ├── eval_logs.html                      # 评测日志审查台：口令门（666，sessionStorage）+错误类型勾选筛选+gold/pred 左右并排（≤560px 上下堆叠）+右上角 Trace 入口
+│   ├── traces.html                         # Trace 页：按 run_id 展示检查点历史（节点/下一步/事件/状态预览）
 │   ├── prompt_optimize.html                # 提示词优化工作台：左输入区（文件加载/策略选择/额外要求/评估开关）+右结果区（修改说明/双栏diff/评估对比/写回）
 │   ├── nginx.conf                          # Nginx配置：托管前端静态资源，/api反向代理到后端容器
 │   │
@@ -115,9 +144,15 @@ nl2sql-agent/
 │       │   ├── sql_block.css               # SQL展示块样式：代码高亮、复制按钮、纠错轨迹折叠面板
 │       │   ├── metrics.css                 # 统计条样式：耗时/token摘要行、悬停分步明细浮层
 │       │   ├── prompt_optimize.css         # 优化工作台样式：双栏diff高亮、评估用例卡片
+│       │   ├── eval_logs.css               # 评测日志审查台样式：筛选标签、gold/pred 双栏对比
+│       │   ├── traces.css                  # Trace 页样式：链路时间轴、状态卡
+│       │   ├── auth.css                    # 登录页与口令门样式
 │       │   └── components.css              # 通用组件样式：按钮、图标按钮、标签等
 │       │
 │       ├── js/
+│       │   ├── auth.js                     # 访问控制：用户名登录（X-User-Id 请求头）、页面守卫、评测日志口令门
+│       │   ├── eval_logs.js                # 评测日志审查台逻辑：分组加载、错误分类筛选与计数、结果集对比
+│       │   ├── traces.js                   # Trace 页逻辑：时间序渲染检查点链路与事件
 │       │   ├── api.js                      # API封装：fetch统一请求（非2xx解析后端detail/message透出错误详情）；SSE用fetch+ReadableStream解析data:事件（POST流，非EventSource）；会话/对话接口封装
 │       │   ├── chat.js                     # 对话逻辑：SSE事件按类型分流到回复卡片（intent/sql/executing/correcting/explanation/result/usage/error/done）；发送前等待会话就绪（waitForSession防首条消息丢session_id）；顶栏侧栏开合绑定
 │       │   ├── reply_card.js               # 回复卡片组件：一次回复聚合一张卡（视图切换tabs/意图标签/状态行/SQL块/纠错轨迹/解读/结果视图/统计条），流式事件原地填充分区
@@ -137,12 +172,22 @@ nl2sql-agent/
 │           ├── highlight.min.js            # 代码高亮库（含SQL语法支持）
 │           └── sql-formatter.min.js        # SQL格式化库：SQL语句缩进美化展示
 │
-├── docker-compose.yml                      # Docker编排：backend服务（引用./backend构建，Dockerfile待补充）+frontend服务（nginx:alpine挂载静态资源与nginx.conf反代/api）
+├── docker-compose.yml                      # Docker编排：redis（镜像 redis:8，内置 RedisJSON/RediSearch，AOF 落盘）+backend服务（挂载 data/config/prompts/logs，NL2SQL_REDIS_URL 指向 redis）+frontend服务（nginx:alpine 静态托管与 /api 反代）
 ├── scripts/
 │   ├── start_backend.sh                    # 后端启动脚本：安装依赖并以指定端口启动uvicorn
 │   ├── start_frontend.sh                   # 前端启动脚本：开发环境起静态服务器/加载Nginx
 │   └── init_schema_cache.sh                # 预热脚本：解析表结构+构建Schema向量索引（--force强制重建）；仅features.schema_retriever开启时有意义
 │
+├── test_env/                               # Spider 基准评测环境（脚本/测试数据/历史结果入库，仅 .env.test 凭据不入库）：run_eval/run_fail/run_test_server/test_connect/results
+├── test_queries.csv                        # Spider 评测测试集（682 题 / 20 库，run_eval.py 与 run_fail.py 读取）
 ├── README.md                               # 项目说明：功能介绍、配置表、启动指南、接口文档、FAQ（流水线基于 LangGraph 编排）
-├── 项目说明书.md                            # 详细说明书：全链路图、节点与条件边、开关、模型调用、文件分类注释（gitignore，不入库）
-└── 产品文档.txt                             # 产品需求文档（gitignore，不入库）
+└── docs/                                   # 项目文档目录（内部文档多数在 .gitignore 中，按需本地保留）
+    ├── 项目说明书.md                        # 详细说明书：全链路图、节点与条件边、开关、模型调用、文件分类注释
+    ├── 查询链路状态图详解.md                 # 查询链路状态图逐节点详解
+    ├── 事实源与多用户改造报告.md              # LangGraph 检查点事实源与多用户隔离改造报告
+    ├── 系统预埋与开关清单.md                 # 系统预埋能力与配置开关清单
+    ├── 未来拓展规划.md                      # 后续功能拓展规划
+    ├── JOIN治理更新报告.md                   # JOIN 关系图谱/静态校验/扇出检测治理报告
+    ├── 简历-项目经历.md                     # 简历用项目经历整理
+    ├── 问答文档.txt                         # 项目问答整理
+    └── 产品文档.txt                         # 产品需求文档
