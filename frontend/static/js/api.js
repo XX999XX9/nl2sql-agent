@@ -1,11 +1,24 @@
 // API 封装：统一封装后端接口调用（fetch），含 SSE 流式事件解析与错误处理
+//
+// 多用户：所有请求自动携带 X-User-Id 请求头。
+// 用户名由登录页写入 localStorage；请求头做 URL 编码，兼容中文用户名，
+// 后端解码后作为会话、检查点线程与 Trace 的隔离维度。
 
 const BASE_URL = "/api";
+const USER_KEY = "nl2sql_user_id";
+
+function currentUserId() {
+  return (localStorage.getItem(USER_KEY) || "").trim() || "default";
+}
+
+function authHeaders(extra = {}) {
+  return { "X-User-Id": encodeURIComponent(currentUserId()), ...extra };
+}
 
 async function request(path, options = {}) {
   const res = await fetch(`${BASE_URL}${path}`, {
-    headers: { "Content-Type": "application/json" },
     ...options,
+    headers: authHeaders({ "Content-Type": "application/json", ...(options.headers || {}) }),
   });
   if (!res.ok) {
     // 优先透出后端返回的错误详情（HTTPException detail / 统一包装 message）
@@ -40,6 +53,19 @@ async function deleteSession(sessionId) {
   return request(`/session/${sessionId}`, { method: "DELETE" });
 }
 
+// Trace：执行记录列表 / 单次执行的逐检查点链路
+async function listTraces(sessionId = null, limit = 100) {
+  const qs = new URLSearchParams({ limit });
+  if (sessionId) qs.set("session_id", sessionId);
+  const resp = await request(`/traces?${qs.toString()}`);
+  return resp.data || [];
+}
+
+async function getTrace(runId) {
+  const resp = await request(`/traces/${runId}`);
+  return resp.data;
+}
+
 // 非流式对话：提问 → 返回意图 + SQL + 执行结果/解释 + usage
 async function chat(message, sessionId = null) {
   const body = { message };
@@ -51,7 +77,7 @@ async function chat(message, sessionId = null) {
 async function streamChat(payload, onEvent) {
   const res = await fetch(`${BASE_URL}/chat/stream`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(payload),
   });
   if (!res.ok) {
@@ -78,4 +104,9 @@ async function streamChat(payload, onEvent) {
   }
 }
 
-window.api = { request, chat, streamChat, createSession, listSessions, getSession, deleteSession };
+window.api = {
+  request, chat, streamChat,
+  createSession, listSessions, getSession, deleteSession,
+  listTraces, getTrace,
+  currentUserId,
+};

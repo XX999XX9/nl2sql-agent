@@ -114,6 +114,10 @@
         if (ev.data.turn_id) {
           activeCard.bindQuote(ev.data.turn_id, activeQuestion);
         }
+        // 每次执行都有 run_id：卡片头「链路」跳转 Trace 页
+        if (ev.data.run_id) {
+          activeCard.bindTrace(ev.data.run_id);
+        }
         break;
     }
   }

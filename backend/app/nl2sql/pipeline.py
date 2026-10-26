@@ -16,17 +16,23 @@
 #     result/usage/error/done），前端与 chat.py 路由零改动
 #   - PipelineResult / TurnTracker 以可变对象引用注入 State（图内就地更新），
 #     控制字段（attempt/route/error_message）经节点返回值走 LangGraph 通道语义
-#   - 多轮会话持久化仍由 ConversationManager 承载（业务字段：标题/结果快照/回放），
-#     图为单轮无状态执行，后续如需断点续跑可无缝挂 LangGraph checkpointer
+#   - 多轮会话、Trace、断点续跑共用同一事实源：LangGraph 检查点（Redis）。
+#     会话视图与 Trace 视图都是检查点的投影，避免正文双写；
+#   - events / turns 两个列表通道使用 DeltaChannel：每个检查点只落增量写，
+#     读取时沿父检查点重放，轮次增长不会让单条检查点线性膨胀；
+#   - 线程按“用户 + 会话”隔离（一次性提问用独立线程），删除会话即删除线程。
 #   - 功能开关接线：intent_classifier（关闭直走 query）/ metrics_enabled（Tracker 空转）/
 #     self_correction（max_rounds 生效为 0）/ schema_retriever（None 走全量）
 
+import time
 import uuid
 import os
+from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Iterator, List, Optional, TypedDict
+from typing import Annotated, Iterator, List, Optional, Sequence, TypedDict
 
 import sqlglot
+from langgraph.channels import DeltaChannel
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 from sqlglot import exp
@@ -35,6 +41,9 @@ from app.formatter.output_formatter import OutputFormatter
 from app.metrics.turn_tracker import TurnTracker
 from app.model.factory import ModelFactory
 from app.nl2sql.conversation import ConversationManager
+from app.persistence.redis_checkpointer import RedisCheckpointSaver
+from app.persistence.redis_store import thread_id_for
+from app.persistence.store import RUN_STATUS_ERROR, RUN_STATUS_OK, SessionRunStore
 from app.nl2sql.explain_gate import ExplainGate
 from app.nl2sql.fanout_checker import FanoutChecker
 from app.nl2sql.intent_classifier import IntentClassifier
@@ -60,6 +69,23 @@ from app.utils.path_tool import BACKEND_ROOT
 logger = setup_logger()
 
 RESULT_PAGE_SIZE = 50   # result 事件携带的首屏行数（其余走分页拉取）
+REPLAY_ROWS_LIMIT = 50  # 会话轮次里保留的结果快照行数（控制检查点体积）
+
+# 当前轮事件的随流缓冲：finalize 节点据此把本轮事件写回状态（供 Trace 投影）。
+# 用 ContextVar 承载，可在不改变节点函数签名的情况下旁路收集。
+_EMIT_BUFFER: ContextVar[Optional[List[dict]]] = ContextVar("emit_buffer", default=None)
+
+
+def _reducer_append(state: Optional[list], writes: Sequence) -> list:
+    """DeltaChannel 追加式 reducer：把每次写（可含多个元素）顺序拼到列表尾部。
+    必须确定性且与批处理无关（顺序无关基准：同批内容一致）。"""
+    out = list(state) if state else []
+    for write in writes:
+        if isinstance(write, list):
+            out.extend(write)
+        else:
+            out.append(write)
+    return out
 
 
 @dataclass
@@ -107,15 +133,23 @@ class PipelineResult:
     # pipeline_error（整库流水线构建失败）——那是评测口径，不属于本字段。
     error_kind: Optional[str] = None
     session_id: Optional[str] = None
+    run_id: Optional[str] = None                # 本次执行 id（Trace 页面的入口标识）
+    turn_id: Optional[str] = None               # 本轮对话 id（引用功能使用）
 
 
 class NL2SQLState(TypedDict, total=False):
     """图状态：result/tracker 为可变对象引用（节点就地更新）；
-    其余为控制字段，经节点返回值更新、供条件边路由消费"""
+    其余为控制字段，经节点返回值更新、供条件边路由消费。
+    events / turns 使用 DeltaChannel：每个检查点只保存本步新增的事件/轮次，
+    读取时沿检查点父链重放，避免全量列表随轮次线性膨胀。"""
     question: str
     session_id: Optional[str]
+    user_id: str                  # 多用户隔离维度
+    run_id: str                   # 单次执行 id（Trace 关联键）
     result: PipelineResult
     tracker: TurnTracker
+    events: Annotated[List[dict], DeltaChannel(_reducer_append, snapshot_frequency=10)]
+    turns: Annotated[List[dict], DeltaChannel(_reducer_append, snapshot_frequency=30)]
     attempt: int                  # 纠错轮次：0=原始 SQL，1..N 为重写
     max_rounds: int               # 纠错上限（开关关闭时为 0）
     error_message: str            # 回喂给纠错节点的错误描述
@@ -135,24 +169,52 @@ class NL2SQLState(TypedDict, total=False):
 
 def _emit(event_type: str, data: dict):
     """经 LangGraph custom 流通道推送一条 SSE 协议事件；
-    无流上下文（invoke 直调）时静默跳过"""
+    同时写入本轮缓冲（iter_run 设置），finalize 会把它落到检查点的 events 通道。
+    无流上下文（invoke 直调）时静默跳过。"""
+    event = {"type": event_type, "data": data, "ts": round(time.time(), 3)}
+    buffer = _EMIT_BUFFER.get()
+    if buffer is not None:
+        buffer.append(event)
     try:
         writer = get_stream_writer()
         if writer:
-            writer({"type": event_type, "data": data})
+            writer(event)
     except Exception:
         pass  # 非流式调用场景，忽略
+
+
+_UNSET = object()   # 区分“没传 checkpointer”和“显式传 None（关闭检查点）”
 
 
 class NL2SQLPipeline:
     """NL2SQL 完整流水线编排入口（LangGraph StateGraph）"""
 
     def __init__(self, conversation_manager: ConversationManager = None,
-                 result_cache: ResultCache = None):
+                 result_cache: ResultCache = None,
+                 checkpointer=_UNSET, run_store: SessionRunStore = None):
         factory = ModelFactory()
         self.llm = factory.create_llm()
         self.schema_manager = SchemaManager()
-        self.conversation = conversation_manager or ConversationManager()
+        # 检查点：LangGraph 原生持久化，默认开启（Redis 是事实源）。
+        # NL2SQL_CHECKPOINTING=off 可关闭，主要用于批量评测（不需要 Trace，省掉写放大）；
+        # 显式传入 checkpointer（API 依赖注入）时以调用方为准。
+        env_ckpt = os.environ.get("NL2SQL_CHECKPOINTING")
+        self.checkpoint_enabled = not (
+            env_ckpt is not None
+            and env_ckpt.strip().lower() in ("0", "off", "false", "no")
+        )
+        if checkpointer is _UNSET:
+            self.checkpointer = (RedisCheckpointSaver() if self.checkpoint_enabled
+                                 else None)
+        else:
+            self.checkpointer = checkpointer
+        self.run_store = run_store if run_store is not None else (
+            SessionRunStore() if self.checkpointer is not None else None
+        )
+        self.conversation = conversation_manager or ConversationManager(
+            checkpointer=self.checkpointer)
+        if getattr(self.conversation, "checkpointer", None) is None:
+            self.conversation.checkpointer = self.checkpointer
         self.result_cache = result_cache or ResultCache()
         agent_cfg = load_yaml(BACKEND_ROOT / "config" / "agent.yml")
         nl2sql_cfg = load_yaml(BACKEND_ROOT / "config" / "nl2sql.yml")
@@ -220,6 +282,8 @@ class NL2SQLPipeline:
             skill_knowledge=self.capability.orchestrator.skill_knowledge,
         )
         self.graph = self._build_graph()
+        # 会话正文从检查点投影：把编译后的图交给会话层（懒读取，避免循环依赖）
+        self.conversation.bind_graph(lambda: self.graph)
 
     def _init_schema_retriever(self, agent_cfg, factory) -> Optional[SchemaRetriever]:
         """按配置创建 Schema 检索器；未开启或初始化失败返回 None（全量路径）"""
@@ -234,28 +298,45 @@ class NL2SQLPipeline:
     # ==================================================================
     # 图构建：节点 + 条件边
     # ==================================================================
+    def _traced(self, node):
+        """节点包装：把该节点执行期间 _emit 出的事件一并写进状态。
+
+        这样每个检查点既有“执行了哪个节点”，也有“该节点产出了哪些事件”，
+        Trace 投影才能把一次问答的事件还原到它真正发生的步骤上。
+        节点返回值仍是普通 dict，只多一个 events 字段（DeltaChannel 追加）。"""
+        def wrapped(state):
+            buffer = _EMIT_BUFFER.get()
+            start = len(buffer) if buffer is not None else 0
+            ret = node(state) or {}
+            if buffer is None or len(buffer) <= start:
+                return ret
+            merged = dict(ret)
+            merged["events"] = list(merged.get("events") or []) + buffer[start:]
+            return merged
+        return wrapped
+
     def _build_graph(self):
         g = StateGraph(NL2SQLState)
 
-        # ---- 节点注册 ----
-        g.add_node("intent", self._n_intent)
-        g.add_node("q_context", self._n_q_context)
-        g.add_node("q_select", self._n_q_select)
-        g.add_node("q_perf", self._n_q_perf)
-        g.add_node("q_opt_correct", self._n_q_opt_correct)
-        g.add_node("q_generate", self._n_q_generate)
-        g.add_node("q_validate", self._n_q_validate)
-        g.add_node("q_guard", self._n_q_guard)
-        g.add_node("q_fanout", self._n_q_fanout)
-        g.add_node("q_execute", self._n_q_execute)
-        g.add_node("q_correct", self._n_q_correct)
-        g.add_node("q_cache", self._n_q_cache)
-        g.add_node("q_explain", self._n_q_explain)
-        g.add_node("d_context", self._n_d_context)
-        g.add_node("d_generate", self._n_d_generate)
-        g.add_node("d_explain", self._n_d_explain)
-        g.add_node("m_answer", self._n_meta)
-        g.add_node("finalize", self._n_finalize)
+        # ---- 节点注册（统一包一层事件采集） ----
+        g.add_node("intent", self._traced(self._n_intent))
+        g.add_node("q_context", self._traced(self._n_q_context))
+        g.add_node("q_select", self._traced(self._n_q_select))
+        g.add_node("q_perf", self._traced(self._n_q_perf))
+        g.add_node("q_opt_correct", self._traced(self._n_q_opt_correct))
+        g.add_node("q_generate", self._traced(self._n_q_generate))
+        g.add_node("q_validate", self._traced(self._n_q_validate))
+        g.add_node("q_guard", self._traced(self._n_q_guard))
+        g.add_node("q_fanout", self._traced(self._n_q_fanout))
+        g.add_node("q_execute", self._traced(self._n_q_execute))
+        g.add_node("q_correct", self._traced(self._n_q_correct))
+        g.add_node("q_cache", self._traced(self._n_q_cache))
+        g.add_node("q_explain", self._traced(self._n_q_explain))
+        g.add_node("d_context", self._traced(self._n_d_context))
+        g.add_node("d_generate", self._traced(self._n_d_generate))
+        g.add_node("d_explain", self._traced(self._n_d_explain))
+        g.add_node("m_answer", self._traced(self._n_meta))
+        g.add_node("finalize", self._traced(self._n_finalize))
 
         # ---- 骨架 ----
         g.add_edge(START, "intent")
@@ -298,18 +379,19 @@ class NL2SQLPipeline:
         g.add_edge("m_answer", "finalize")
         g.add_edge("finalize", END)
 
-        return g.compile()
+        return g.compile(checkpointer=self.checkpointer)
 
     # ==================================================================
     # 对外入口：iter_run 产出事件 dict；run() 消费并返回聚合结果
     # ==================================================================
     def iter_run(self, question: str, session_id: str = None,
                  reference_turn_id: str = None,
-                 clarify_id: str = None) -> Iterator[dict]:
+                 clarify_id: str = None,
+                 user_id: str = "default") -> Iterator[dict]:
         # 人工澄清恢复：用户带着 clarify_id 回答时，取回暂存的原始问题，
         # 把补充信息拼入有效问题后续跑（暂存一次性消费）；无效/过期 clarify_id 静默忽略
         if clarify_id and session_id:
-            pending = self.conversation.take_clarify(session_id, clarify_id)
+            pending = self.conversation.take_clarify(user_id, session_id, clarify_id)
             if pending:
                 logger.info("恢复澄清会话 %s，用户补充：%s", clarify_id, question[:50])
                 question = (
@@ -317,16 +399,22 @@ class NL2SQLPipeline:
                     f"【用户针对待澄清问题的补充信息，请据此生成 SQL】{question}"
                 )
                 reference_turn_id = pending.get("reference_turn_id") or reference_turn_id
-        result = PipelineResult(question=question, session_id=session_id)
+        run_id = uuid.uuid4().hex[:16]
+        result = PipelineResult(question=question, session_id=session_id, run_id=run_id)
         result.reference_turn_id = reference_turn_id
         tracker = TurnTracker(enabled=self.metrics_enabled)
         initial: NL2SQLState = {
             "question": question,
             "session_id": session_id,
+            "user_id": user_id,
+            "run_id": run_id,
             "reference_turn_id": reference_turn_id,
             "clarify_id": clarify_id,
             "result": result,                       # 可变引用：图内就地更新
             "tracker": tracker,
+            # DeltaChannel 的初始值：新线程从空开始；已有线程追加空列表等价于不变
+            "events": [],
+            "turns": [],
             "attempt": 0,
             "max_rounds": self.corrector.max_rounds if self.corrector_enabled else 0,
             "error_message": "",
@@ -338,17 +426,42 @@ class NL2SQLPipeline:
             "opt_rounds": 0,
             "route": "",
         }
-        config = {"configurable": {"thread_id": session_id or uuid.uuid4().hex}}
-        # custom 通道透出各节点 _emit 的事件；结束后经 StopIteration.value 返回 result
-        yield from (chunk for chunk in self.graph.stream(initial, config, stream_mode="custom"))
+        # 线程按“用户 + 会话”隔离；一次性提问也分配临时线程，保证每次执行都有 Trace
+        thread_id = (thread_id_for(user_id, session_id) if session_id
+                     else f"{user_id}:run:{run_id}")
+        config = {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
+        if self.run_store is not None:
+            self.run_store.start_run(user_id, run_id, session_id, thread_id, question)
+
+        token = _EMIT_BUFFER.set([])
+        try:
+            # custom 通道透出各节点 _emit 的事件；结束后经 StopIteration.value 返回 result
+            yield from (chunk for chunk in self.graph.stream(
+                initial, config, stream_mode="custom"))
+        except Exception as e:
+            if self.run_store is not None:
+                self.run_store.finish_run(
+                    user_id, run_id, status=RUN_STATUS_ERROR, error=str(e))
+            raise
+        else:
+            if self.run_store is not None:
+                self.run_store.finish_run(
+                    user_id, run_id,
+                    status=RUN_STATUS_ERROR if result.error else RUN_STATUS_OK,
+                    error=result.error or "",
+                    turn_id=result.turn_id or "",
+                )
+        finally:
+            _EMIT_BUFFER.reset(token)
         return result
 
     def run(self, question: str, session_id: str = None,
-            reference_turn_id: str = None, clarify_id: str = None) -> PipelineResult:
+            reference_turn_id: str = None, clarify_id: str = None,
+            user_id: str = "default") -> PipelineResult:
         """同步聚合版本：消费图执行的事件流，返回 PipelineResult"""
         gen = self.iter_run(question, session_id,
                             reference_turn_id=reference_turn_id,
-                            clarify_id=clarify_id)
+                            clarify_id=clarify_id, user_id=user_id)
         try:
             while True:
                 next(gen)
@@ -394,20 +507,23 @@ class NL2SQLPipeline:
         """上下文增强：多轮上下文 + Schema检索 + 术语映射 + 值链接"""
         result, tracker = state["result"], state["tracker"]
         question, session_id = state["question"], state["session_id"]
+        user_id = state.get("user_id", "default")
         reference_turn_id = state.get("reference_turn_id")
         with tracker.step("上下文增强"):
             # 显式引用：只注入被引用轮（替代默认上一轮）；否则注入最近一轮（省略式追问）
             conv_ctx = (
                 self.conversation.build_context(
-                    session_id, reference_turn_id=reference_turn_id)
+                    user_id, session_id, reference_turn_id=reference_turn_id)
                 if session_id else ""
             )
             # Schema 检索（大库 Top-K；小库/未开启返回 None 走全量）；
             # 引用/上轮 SQL 涉及表强制并入；命中表再沿关系图扩展 JOIN 邻接表
             if session_id and reference_turn_id:
-                forced_tables = self.conversation.turn_tables(session_id, reference_turn_id)
+                forced_tables = self.conversation.turn_tables(
+                    user_id, session_id, reference_turn_id)
             else:
-                forced_tables = self.conversation.last_tables(session_id) if session_id else []
+                forced_tables = (self.conversation.last_tables(user_id, session_id)
+                                 if session_id else [])
             candidate_tables = self._select_candidate_tables(question, forced_tables)
             term_ctx, term_hits = self.term_mapper.build_context(question)
             value_ctx, value_hits = self.value_linker.build_context(question, tables=candidate_tables)
@@ -471,6 +587,7 @@ class NL2SQLPipeline:
             logger.warning("无 session_id，无法暂存澄清现场，回退全量 Schema 继续")
             return {"selected_schema": "", "table_selection": {}, "route": "q_generate"}
         clarify_id = self.conversation.save_clarify(
+            state.get("user_id", "default"),
             session_id,
             question=state["question"],
             questions=clar.questions,
@@ -850,17 +967,20 @@ class NL2SQLPipeline:
     def _n_d_context(self, state: NL2SQLState) -> dict:
         result, tracker = state["result"], state["tracker"]
         question, session_id = state["question"], state["session_id"]
+        user_id = state.get("user_id", "default")
         reference_turn_id = state.get("reference_turn_id")
         with tracker.step("上下文增强"):
             conv_ctx = (
                 self.conversation.build_context(
-                    session_id, reference_turn_id=reference_turn_id)
+                    user_id, session_id, reference_turn_id=reference_turn_id)
                 if session_id else ""
             )
             if session_id and reference_turn_id:
-                forced_tables = self.conversation.turn_tables(session_id, reference_turn_id)
+                forced_tables = self.conversation.turn_tables(
+                    user_id, session_id, reference_turn_id)
             else:
-                forced_tables = self.conversation.last_tables(session_id) if session_id else []
+                forced_tables = (self.conversation.last_tables(user_id, session_id)
+                                 if session_id else [])
             candidate_tables = self._select_candidate_tables(question, forced_tables)
         result.executed = False
         return {"extra_context": conv_ctx, "candidate_tables": candidate_tables}
@@ -954,35 +1074,45 @@ class NL2SQLPipeline:
         result.usage = usage
         _emit("usage", usage)
 
-        # 记录轮次（含回放所需的解释/结果快照/统计）；
+        # 轮次作为“会话事实”直接写回图状态（turns 是 DeltaChannel，检查点只存增量）；
         # 失败轮次、meta、人工澄清暂停轮均不记录（澄清只暂存现场，不产生问答轮）
         turn_id = None
+        turn_delta: List[dict] = []
         if (session_id and not result.error
                 and result.intent in ("query", "dml")
                 and not result.need_clarification):
-            turn = self.conversation.add_turn(
-                session_id, question, result.sql,
-                tables=self._extract_tables(result.sql), intent=result.intent,
-                explanation=result.explanation, sql_label=result.sql_label,
-                result=(
-                    {
-                        "columns": result.columns,
-                        "rows": result.rows,
-                        "total": result.total,
-                        "truncated": result.truncated,
-                    }
-                    if result.intent == "query" and result.executed else None
-                ),
-                usage=usage,
-            )
-            turn_id = turn.turn_id if turn else None
-        # 澄清暂停时 done 同时回传 clarify 字段，非澄清轮回传 turn_id 供前端“引用”
+            turn_id = uuid.uuid4().hex[:12]
+            result.turn_id = turn_id
+            snapshot = None
+            if result.intent == "query" and result.executed:
+                snapshot = {
+                    "columns": result.columns,
+                    "rows": result.rows[:REPLAY_ROWS_LIMIT],
+                    "total": result.total,
+                    "truncated": result.truncated,
+                }
+            turn_delta.append({
+                "turn_id": turn_id,
+                "question": question,
+                "sql": result.sql,
+                "tables": self._extract_tables(result.sql),
+                "intent": result.intent,
+                "timestamp": time.time(),
+                "explanation": result.explanation,
+                "sql_label": result.sql_label,
+                "result": snapshot,
+                "usage": usage,
+                "run_id": result.run_id,
+            })
+        # 澄清暂停时 done 同时回传 clarify 字段，非澄清轮回传 turn_id/run_id 供前端“引用/看链路”
         _emit("done", {
             "turn_id": turn_id,
+            "run_id": result.run_id,
             "clarify_id": result.clarify_id,
             "need_clarification": result.need_clarification,
         })
-        return {}
+        # 本轮事件由节点包装器按步写入 events 通道（见 _traced），这里只提交轮次增量
+        return {"turns": turn_delta}
 
     # ==================================================================
     @staticmethod

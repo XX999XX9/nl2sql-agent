@@ -17,6 +17,7 @@
         </div>
         <span class="card-header-right" style="display:flex;gap:8px;align-items:center;">
           <button type="button" class="quote-btn" hidden>引用</button>
+          <a class="trace-link" hidden target="_blank" rel="noopener" title="查看本次执行的完整图链路">链路</a>
           <span class="intent-tag" hidden></span>
         </span>
       </div>
@@ -79,6 +80,14 @@
             window.chat.setReference({ turn_id: turnId, question });
           }
         };
+      },
+
+      bindTrace(runId) {
+        // 指向 Trace 页：该次执行在检查点中的完整节点链路
+        if (!runId) return;
+        const link = $(".trace-link");
+        link.hidden = false;
+        link.href = `/traces.html?run_id=${encodeURIComponent(runId)}`;
       },
 
       setClarification(data) {

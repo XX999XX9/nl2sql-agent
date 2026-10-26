@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-auth="none">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>登录 - NL2SQL</title>
+  <link rel="stylesheet" href="static/css/main.css" />
+  <link rel="stylesheet" href="static/css/auth.css" />
+</head>
+<body class="auth-page">
+  <form id="login-form" class="auth-card" autocomplete="off">
+    <h1>NL2SQL</h1>
+    <p class="auth-tip">输入用户名即可进入；会话、Trace 均按用户名隔离。换一个用户名即切换用户。</p>
+    <input id="login-name" class="auth-input" type="text" maxlength="32" placeholder="用户名，例如：张三" autofocus />
+    <div class="auth-error" id="login-error"></div>
+    <button class="auth-submit" type="submit">进入</button>
+  </form>
+
+  <script src="static/js/auth.js"></script>
+  <script>
+    (function () {
+      const input = document.getElementById("login-name");
+      const errorEl = document.getElementById("login-error");
+      const params = new URLSearchParams(location.search);
+      // 只允许站内回跳，避免开放重定向
+      const rawNext = params.get("next") || "/";
+      const next = rawNext.startsWith("/") && !rawNext.startsWith("//") ? rawNext : "/";
+
+      input.value = Auth.userName();
+      if (input.value) setTimeout(() => input.select(), 30);
+
+      document.getElementById("login-form").addEventListener("submit", (e) => {
+        e.preventDefault();
+        const name = input.value.trim();
+        if (!name) {
+          errorEl.textContent = "请输入用户名";
+          input.focus();
+          return;
+        }
+        if (/[:\r\n\t]/.test(name)) {
+          errorEl.textContent = "用户名不能包含冒号或换行";
+          input.focus();
+          return;
+        }
+        Auth.setUser(name);
+        location.href = next;
+      });
+    })();
+  </script>
+</body>
+</html>

@@ -2,6 +2,7 @@
 # 错误捕获与分类、结果行数截断与规范化（列名+行数据+总行数+是否截断）；
 # 执行成功后将结果存入结果缓存并分配 query_id（缓存后续阶段接入）
 
+import os
 import re
 from datetime import date, datetime
 from decimal import Decimal
@@ -33,7 +34,14 @@ class SQLExecutor:
     def __init__(self):
         cfg = load_yaml(BACKEND_ROOT / "config" / "database.yml")["database"]
         self._db_name = cfg["name"]
-        self._row_limit = int(cfg.get("result_row_limit", 1000))
+        # 环境变量 NL2SQL_RESULT_ROW_LIMIT 可覆盖配置；0 = 不截断
+        # （评测场景关闭，配合 Guard 不追加强制 LIMIT，避免大结果集被裁短误判；
+        # 执行超时 max_execution_time 仍是兜底，生产默认沿用配置 1000）
+        env_row_limit = os.environ.get("NL2SQL_RESULT_ROW_LIMIT")
+        self._row_limit = (
+            int(env_row_limit) if env_row_limit is not None
+            else int(cfg.get("result_row_limit", 1000))
+        )
         self._execution_timeout = int(cfg.get("execution_timeout", 30))
         self._engine = create_engine(
             f"mysql+pymysql://{cfg['user']}:{cfg['password']}@{cfg['host']}:{cfg['port']}/{cfg['name']}"
@@ -58,7 +66,7 @@ class SQLExecutor:
             except DBAPIError as e:
                 raise self._classify_error(e) from e
 
-        truncated = len(rows) > self._row_limit
+        truncated = self._row_limit > 0 and len(rows) > self._row_limit
         if truncated:
             rows = rows[: self._row_limit]
         total = self._count_total(sql, truncated)

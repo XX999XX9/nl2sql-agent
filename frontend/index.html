@@ -1,10 +1,12 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-auth="user">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>NL2SQL</title>
   <link rel="stylesheet" href="static/css/main.css" />
+  <link rel="stylesheet" href="static/css/auth.css" />
+  <script src="static/js/auth.js"></script>
   <link rel="stylesheet" href="static/css/chat.css" />
   <link rel="stylesheet" href="static/css/components.css" />
   <link rel="stylesheet" href="static/css/sql_block.css" />
@@ -14,11 +16,15 @@
 <body>
   <div id="app">
     <header class="app-header">
-      <button id="toggle-sessions" class="icon-btn" title="会话列表">☰</button>
-      <h1>NL2SQL</h1>
-      <button id="toggle-dict" class="icon-btn" title="数据字典">📚</button>
-      <a href="/eval_logs.html" class="icon-btn" title="评测日志审查"
-         style="text-decoration:none;display:inline-flex;align-items:center;">📊</a>
+      <div class="header-left">
+        <button id="toggle-sessions" class="icon-btn" title="会话列表">☰</button>
+        <h1>NL2SQL</h1>
+      </div>
+      <nav class="header-right">
+        <button id="toggle-dict" class="nav-link" type="button" title="显示/隐藏映射表">映射表</button>
+        <a href="/eval_logs.html" class="nav-link">日志</a>
+        <button class="nav-link" type="button" data-auth-user title="点击切换用户">切换用户</button>
+      </nav>
     </header>
 
     <div class="app-body">

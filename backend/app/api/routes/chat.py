@@ -8,7 +8,7 @@ import json
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 
-from app.api.deps import get_pipeline
+from app.api.deps import get_pipeline, get_user_id
 from app.nl2sql.pipeline import NL2SQLPipeline
 from app.schemas.chat import ChatRequest, ChatResponse
 from app.schemas.common import ErrorCode
@@ -20,12 +20,13 @@ router = APIRouter()
 def chat(
     body: ChatRequest,
     pipeline: NL2SQLPipeline = Depends(get_pipeline),
+    user_id: str = Depends(get_user_id),
 ):
     """非流式：意图分流 → 查询执行/仅生成SQL/元信息回答（与 SSE 同一 pipeline）"""
     result = pipeline.run(
         body.message, session_id=body.session_id,
         reference_turn_id=body.reference_turn_id,
-        clarify_id=body.clarify_id,
+        clarify_id=body.clarify_id, user_id=user_id,
     )
     code = ErrorCode.OK if result.error is None else ErrorCode.INTERNAL_ERROR
     if result.error_kind == "guard":
@@ -66,6 +67,8 @@ def chat(
         usage=result.usage,
         error=result.error,
         error_kind=result.error_kind,
+        run_id=result.run_id,
+        turn_id=result.turn_id,
     )
 
 
@@ -73,6 +76,7 @@ def chat(
 def chat_stream(
     body: ChatRequest,
     pipeline: NL2SQLPipeline = Depends(get_pipeline),
+    user_id: str = Depends(get_user_id),
 ):
     """流式 SSE：逐事件推送流水线进度（事件协议见 schemas/chat.ChatEvent）"""
 
@@ -81,7 +85,7 @@ def chat_stream(
             for event in pipeline.iter_run(
                 body.message, session_id=body.session_id,
                 reference_turn_id=body.reference_turn_id,
-                clarify_id=body.clarify_id,
+                clarify_id=body.clarify_id, user_id=user_id,
             ):
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
         except Exception as e:  # 流中途异常兜底：保证前端一定收到终止事件

@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-auth="user">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>执行链路 - NL2SQL</title>
+    <link rel="stylesheet" href="static/css/main.css" />
+    <link rel="stylesheet" href="static/css/traces.css" />
+    <script src="static/js/auth.js"></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <h1>执行链路</h1>
+      <span class="topbar-sub">每一次 nl→SQL 的完整图执行过程（检查点投影）</span>
+      <div class="topbar-actions">
+        <a class="nav-link" href="/eval_logs.html">评测日志</a>
+        <a class="back-link" href="/">← 返回对话</a>
+      </div>
+    </header>
+
+    <div class="layout">
+      <!-- 左：执行记录（按会话分组） -->
+      <aside class="trace-sidebar">
+        <div class="sidebar-head">
+          <input id="trace-filter" type="text" placeholder="按问题过滤…" autocomplete="off" />
+          <button id="trace-refresh" class="btn btn-sm" type="button">刷新</button>
+        </div>
+        <div id="trace-list"></div>
+      </aside>
+
+      <!-- 右：单次执行详情 -->
+      <main class="content" id="trace-detail">
+        <div class="empty-hint">← 从左侧选择一次执行，查看完整链路</div>
+      </main>
+    </div>
+
+    <script src="static/js/api.js"></script>
+    <script src="static/js/traces.js"></script>
+  </body>
+</html>

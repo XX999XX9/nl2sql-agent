@@ -312,6 +312,19 @@
 }
 .quote-btn:hover { background: #ede9fe; }
 
+/* 卡片头「链路」链接：跳转 Trace 页查看本次执行的图执行流程 */
+.trace-link {
+  border: 1px solid #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 12px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.trace-link:hover { background: #dbeafe; }
+
 /* ===== SQL 一致性裁判标签（实心椭圆，2 字宽） ===== */
 .sql-check-badge {
   display: inline-block;

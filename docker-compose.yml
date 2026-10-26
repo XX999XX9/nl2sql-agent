@@ -1,6 +1,16 @@
 version: "3"
 
 services:
+  redis:
+    image: redis:7-alpine
+    # appendonly yes：检查点与会话记录是唯一事实源，必须落盘（AOF）而不是只存在内存里
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+
   backend:
     build:
       context: ./backend
@@ -13,6 +23,9 @@ services:
       - ./backend/logs:/app/logs
     environment:
       - NL2SQL_PORT=8002
+      - NL2SQL_REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - redis
     restart: unless-stopped
 
   frontend:

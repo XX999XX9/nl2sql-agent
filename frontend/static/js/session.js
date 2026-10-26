@@ -123,6 +123,8 @@
         if (t.explanation) card.setExplanation(t.explanation, t.sql_label);
         // 历史卡片可被新提问显式引用
         if (t.turn_id) card.bindQuote(t.turn_id, t.question);
+        // 历史卡片同样可回看当次执行的图链路
+        if (t.run_id) card.bindTrace(t.run_id);
         // 结果快照本地渲染（无 query_id，本地切片分页）
         if (t.result && t.result.columns && t.result.columns.length) {
           card.setResult({

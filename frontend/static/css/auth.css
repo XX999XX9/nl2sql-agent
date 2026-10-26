@@ -1,0 +1,71 @@
+/* 登录页与评测日志口令弹层 */
+
+body.auth-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-color);
+  padding: 20px;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 340px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 28px 24px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.auth-card h1 { font-size: 20px; }
+.auth-card h2 { font-size: 16px; }
+
+.auth-tip {
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.auth-input {
+  padding: 10px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 14px;
+  outline: none;
+}
+.auth-input:focus { border-color: var(--primary-color); }
+
+.auth-submit {
+  margin-top: 4px;
+  padding: 10px;
+  border: none;
+  border-radius: 8px;
+  background: var(--primary-color);
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+}
+.auth-submit:hover { background: #4338ca; }
+
+.auth-error {
+  color: #dc2626;
+  font-size: 12px;
+  min-height: 16px;
+}
+
+/* 口令验证遮罩 */
+.auth-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(17, 24, 39, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}

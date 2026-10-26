@@ -4,6 +4,7 @@
 # - 执行保护：SELECT 自动追加强制 LIMIT
 # 与数据库只读账号形成三保险
 
+import os
 import re
 
 import sqlglot
@@ -69,9 +70,14 @@ class SQLGuard:
             )
 
         # 3. LIMIT 保护：无 LIMIT 的 SELECT 追加强制 LIMIT（AST 检测，覆盖 UNION 场景）
+        #    环境变量 NL2SQL_FORCED_LIMIT 可覆盖配置；0 = 不追加
+        #    （评测场景关闭截断，保证 pred 结果集不被裁短而与 gold 误判不一致；
+        #    生产配置仍为 database.yml 的 forced_limit，默认 1000）
         if not stmt.args.get("limit"):
-            limit = int(self._db_config["forced_limit"])
-            stmt = stmt.limit(limit)
+            env_limit = os.environ.get("NL2SQL_FORCED_LIMIT")
+            limit = int(env_limit) if env_limit is not None else int(self._db_config["forced_limit"])
+            if limit > 0:
+                stmt = stmt.limit(limit)
 
         return stmt.sql(dialect="mysql")
 

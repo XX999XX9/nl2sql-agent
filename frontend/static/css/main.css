@@ -28,13 +28,59 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
+  gap: 16px;
+  padding: 8px 16px;
   border-bottom: 1px solid #e5e7eb;
   background: #fff;
 }
 
 .app-header h1 {
   font-size: 18px;
+  line-height: 1;
+}
+
+/* 顶栏左：会话开关 + 标题；右：文字入口 + 当前用户 */
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.nav-link {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 10px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: #374151;
+  font-size: 13px;
+  font-family: inherit;
+  line-height: 1;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.nav-link:hover {
+  background: #f3f4f6;
+  color: var(--primary-color);
+}
+
+/* 页面顶栏右侧操作区（评测日志 / Trace 页共用） */
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
 }
 
 .chat-box {

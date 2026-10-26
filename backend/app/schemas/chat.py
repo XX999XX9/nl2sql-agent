@@ -26,7 +26,8 @@ class ChatEvent(BaseModel):
     - result       {query_id, columns, rows, total, truncated, executed}
     - usage        {elapsed_ms, prompt_tokens, completion_tokens, total_tokens, steps:[{name,elapsed_ms,...}]}
     - error        {message, kind}
-    - done         {turn_id?, clarify_id?, need_clarification?}  本轮流结束
+    - done         {run_id?, turn_id?, clarify_id?, need_clarification?}  本轮结束
+                   run_id 用于跳转 Trace 页查看本次完整图执行链路
     """
 
     type: str
@@ -66,6 +67,8 @@ class ChatResponse(BaseModel):
     clarify_id: Optional[str] = None
     clarification_questions: List[str] = []
     reference_turn_id: Optional[str] = None
+    run_id: Optional[str] = None      # 本次执行 id：Trace 页面的入口标识
+    turn_id: Optional[str] = None     # 本轮对话 id：引用历史回答时使用
     term_mappings: List[dict] = []
     value_mappings: List[dict] = []
     correction_trail: List[dict] = []   # 纠错轨迹：每轮 {round, error, sql}
