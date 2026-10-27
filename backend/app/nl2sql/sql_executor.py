@@ -4,6 +4,7 @@
 
 import os
 import re
+from contextlib import contextmanager
 from datetime import date, datetime
 from decimal import Decimal
 from typing import List, Optional
@@ -54,11 +55,29 @@ class SQLExecutor:
         )
 
     # ------------------------------------------------------------------
+    @contextmanager
+    def _connect(self):
+        """统一取连接：先设会话级执行超时（毫秒）。
+
+        池化连接会复用同一物理连接，会话变量随之沿用；但 COUNT/EXPLAIN/索引查询
+        等旁路若走裸 connect，则可能拿到尚未设过超时的连接而长时间挂住。
+        所有查询一律经此入口，保证超时口径一致（MySQL 8 的 max_execution_time
+        只对只读 SELECT 生效，恰好匹配本执行器的只读定位）。
+        """
+        with self._engine.connect() as conn:
+            try:
+                conn.exec_driver_sql(
+                    f"SET SESSION max_execution_time = {self._execution_timeout * 1000}"
+                )
+            except DBAPIError as e:
+                # 老版本 MySQL 不支持该变量时降级为不设超时，不让整条链路挂掉
+                logger.warning("设置执行超时失败（降级为无限期）：%s", e)
+            yield conn
+
+    # ------------------------------------------------------------------
     def execute(self, sql: str) -> dict:
         """执行 SELECT 并返回 {columns, rows, total, truncated}"""
-        with self._engine.connect() as conn:
-            # MySQL 8：SELECT 语句的执行超时（毫秒）
-            conn.exec_driver_sql(f"SET SESSION max_execution_time = {self._execution_timeout * 1000}")
+        with self._connect() as conn:
             try:
                 result = conn.execute(text(sql))
                 columns = list(result.keys())
@@ -80,7 +99,7 @@ class SQLExecutor:
             return -1  # 未截断时 total 就是行数，由 pipeline 填充
         unbounded = _TRAILING_LIMIT_RE.sub("", sql).strip().rstrip(";")
         try:
-            with self._engine.connect() as conn:
+            with self._connect() as conn:
                 value = conn.execute(text(f"SELECT COUNT(*) FROM ({unbounded}) AS _t")).scalar()
                 return int(value)
         except Exception as e:  # COUNT 失败不影响主结果
@@ -119,7 +138,7 @@ class SQLExecutor:
 
     def explain(self, sql: str) -> List[dict]:
         """执行 EXPLAIN（不实际运行 SQL），返回每个计划行的 dict（列名→值）"""
-        with self._engine.connect() as conn:
+        with self._connect() as conn:
             result = conn.execute(text(f"EXPLAIN {sql}"))
             columns = list(result.keys())
             return [dict(zip(columns, self._normalize_row(row))) for row in result.fetchall()]
@@ -127,7 +146,7 @@ class SQLExecutor:
     def table_indexes(self, table: str) -> List[dict]:
         """表上的真实索引（information_schema.STATISTICS）：
         [{index_name, column, non_unique, seq}]，按索引名/序号排序"""
-        with self._engine.connect() as conn:
+        with self._connect() as conn:
             rows = conn.execute(
                 text(
                     "SELECT INDEX_NAME, COLUMN_NAME, NON_UNIQUE, SEQ_IN_INDEX "

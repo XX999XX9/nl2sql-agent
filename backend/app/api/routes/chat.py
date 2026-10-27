@@ -7,6 +7,7 @@ import json
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
+from starlette.background import BackgroundTask
 
 from app.api.deps import get_pipeline, get_user_id
 from app.nl2sql.pipeline import NL2SQLPipeline
@@ -92,12 +93,26 @@ def chat_stream(
             yield f"data: {json.dumps({'type': 'error', 'data': {'message': f'内部错误：{e}', 'kind': 'internal'}}, ensure_ascii=False)}\n\n"
             yield f"data: {json.dumps({'type': 'done', 'data': {}}, ensure_ascii=False)}\n\n"
 
+    def close_stream():
+        """断开后确定性关闭生成器：让 iter_run 的 finally 立刻收敛运行状态。
+
+        生成器可能正被消费线程执行（如 LLM 调用中），此时 close() 会抛
+        ValueError（generator already executing）；这种场景无法从外部抢占，
+        交给 iter_run 自身在下次产出/结束时收尾，不让后台任务报错。
+        """
+        try:
+            gen.close()
+        except ValueError:
+            pass
+
+    gen = event_stream()
     return StreamingResponse(
-        event_stream(),
+        gen,
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",   # nginx 不缓冲，逐事件透传
         },
+        background=BackgroundTask(close_stream),
     )

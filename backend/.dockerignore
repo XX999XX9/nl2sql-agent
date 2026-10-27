@@ -1,0 +1,11 @@
+# 构建上下文精简：密钥、运行时数据、日志与缓存都不进镜像
+.env
+.env.*
+__pycache__/
+*.py[cod]
+*.bak
+data/
+logs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

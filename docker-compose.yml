@@ -17,6 +17,9 @@ services:
       context: ./backend
     ports:
       - "8002:8002"
+    env_file:
+      # LLM / MySQL 密钥与连接串（本机创建，不入库）以环境变量注入容器
+      - ./backend/.env
     volumes:
       - ./backend/data:/app/data
       - ./backend/config:/app/config
@@ -25,6 +28,8 @@ services:
     environment:
       - NL2SQL_PORT=8002
       - NL2SQL_REDIS_URL=redis://redis:6379/0
+      # 生产由 frontend 的 nginx 托管静态资源与反代 /api，后端不再重复托管
+      - NL2SQL_SERVE_FRONTEND=false
     depends_on:
       - redis
     restart: unless-stopped

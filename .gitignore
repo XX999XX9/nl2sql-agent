@@ -76,3 +76,6 @@ Thumbs.db
 docs/查询链路状态图详解.md
 docs/问答文档.txt
 docs/事实源与多用户改造报告.md
+docs/亮点考量.md
+.gitignore
+docs/待处理问题.md

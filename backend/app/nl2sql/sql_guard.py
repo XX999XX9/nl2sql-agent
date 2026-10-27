@@ -31,6 +31,12 @@ class SQLGuard:
         "replace", "merge", "grant", "revoke", "rename", "call", "exec",
         "lock", "unlock", "shutdown", "kill", "set", "load_file", "outfile",
         "dumpfile", "information_schema.",
+        # 时间/资源型阻塞：拖住连接或用结果集放大的方式打垮数据库
+        "sleep", "benchmark",
+        # 命名锁：读查询也会留下/释放全局锁，影响其他会话
+        "get_lock", "release_lock",
+        # 报错注入：把查询结果拼进错误信息带出去
+        "updatexml", "extractvalue",
     )
 
     def __init__(self):

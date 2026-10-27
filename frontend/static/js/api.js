@@ -3,16 +3,35 @@
 // 多用户：所有请求自动携带 X-User-Id 请求头。
 // 用户名由登录页写入 localStorage；请求头做 URL 编码，兼容中文用户名，
 // 后端解码后作为会话、检查点线程与 Trace 的隔离维度。
+// 内部工具（提示词工作台等）另带 X-Eval-Token：口令在服务端校验后签发，过期即失效。
 
 const BASE_URL = "/api";
 const USER_KEY = "nl2sql_user_id";
+const EVAL_TOKEN_KEY = "nl2sql_eval_token";
+const EVAL_TOKEN_EXP_KEY = "nl2sql_eval_token_exp";
 
 function currentUserId() {
   return (localStorage.getItem(USER_KEY) || "").trim() || "default";
 }
 
+// 与服务端签发的过期时间对齐；过期即视为无令牌，避免拿失效令牌反复请求
+function currentEvalToken() {
+  const token = sessionStorage.getItem(EVAL_TOKEN_KEY) || "";
+  const exp = Number(sessionStorage.getItem(EVAL_TOKEN_EXP_KEY) || 0);
+  if (!token) return "";
+  if (exp && exp * 1000 <= Date.now()) {
+    sessionStorage.removeItem(EVAL_TOKEN_KEY);
+    sessionStorage.removeItem(EVAL_TOKEN_EXP_KEY);
+    return "";
+  }
+  return token;
+}
+
 function authHeaders(extra = {}) {
-  return { "X-User-Id": encodeURIComponent(currentUserId()), ...extra };
+  const headers = { "X-User-Id": encodeURIComponent(currentUserId()), ...extra };
+  const evalToken = currentEvalToken();
+  if (evalToken) headers["X-Eval-Token"] = evalToken;
+  return headers;
 }
 
 async function request(path, options = {}) {

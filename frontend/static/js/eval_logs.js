@@ -19,7 +19,18 @@ const GROUP_META = [
 ];
 
 async function api(path) {
-  const res = await fetch(path);
+  // 评测令牌由 auth.js 在服务端校验口令后写入 sessionStorage
+  const token = (typeof Auth !== "undefined" && Auth.evalToken) ? Auth.evalToken() : "";
+  const res = await fetch(path, { headers: token ? { "X-Eval-Token": token } : {} });
+  if (res.status === 401) {
+    // 令牌过期/失效：清掉本地令牌并刷新页面，让口令门重新出现
+    try {
+      sessionStorage.removeItem("nl2sql_eval_token");
+      sessionStorage.removeItem("nl2sql_eval_token_exp");
+    } catch (e) { /* 隐私模式等场景忽略 */ }
+    location.reload();
+    throw new Error("访问已过期，请重新验证");
+  }
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
     try { const b = await res.json(); if (b && b.detail) msg = b.detail; } catch (e) {}

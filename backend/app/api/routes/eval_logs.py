@@ -9,12 +9,18 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 
+from app.api.eval_access import issue_token, require_eval_access, verify_password
 from app.schemas.common import ApiResponse
 from app.utils.path_tool import BACKEND_ROOT
 
 router = APIRouter()
+
+
+class EvalAuthRequest(BaseModel):
+    password: str
 
 RESULTS_ROOT = (BACKEND_ROOT.parent / "test_env" / "results").resolve()
 LATEST = RESULTS_ROOT / "latest"
@@ -181,8 +187,17 @@ def _list_group(base: Path) -> list:
     return items
 
 
+@router.post("/auth", response_model=ApiResponse[dict])
+def eval_auth(body: EvalAuthRequest):
+    """口令校验（服务端）：通过则签发短期令牌，后续请求放在 X-Eval-Token 头"""
+    if not verify_password(body.password):
+        raise HTTPException(status_code=401, detail="口令不正确")
+    token, ttl = issue_token()
+    return ApiResponse(data={"token": token, "expires_in": ttl})
+
+
 @router.get("/runs", response_model=ApiResponse[dict])
-def list_runs():
+def list_runs(_access: None = Depends(require_eval_access)):
     """运行列表：latest（最新全量）、fail_tests（失败题复测）、
     all_history（全量历史）、history（单库/冒烟等非全量历史）"""
     groups = {"latest": [], "fail_tests": [], "all_history": [], "history": []}
@@ -252,6 +267,7 @@ def get_run(
     q: str = Query("", description="题目/id 模糊搜索"),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    _access: None = Depends(require_eval_access),
 ):
     """单次运行详情：汇总信息 + 分类/分库计数（未过滤口径）+ 过滤后的分页明细"""
     run_dir = _resolve_run_dir(id)

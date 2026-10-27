@@ -434,16 +434,19 @@ class NL2SQLPipeline:
             self.run_store.start_run(user_id, run_id, session_id, thread_id, question)
 
         token = _EMIT_BUFFER.set([])
+        finished = False
         try:
             # custom 通道透出各节点 _emit 的事件；结束后经 StopIteration.value 返回 result
             yield from (chunk for chunk in self.graph.stream(
                 initial, config, stream_mode="custom"))
         except Exception as e:
+            finished = True
             if self.run_store is not None:
                 self.run_store.finish_run(
                     user_id, run_id, status=RUN_STATUS_ERROR, error=str(e))
             raise
         else:
+            finished = True
             if self.run_store is not None:
                 self.run_store.finish_run(
                     user_id, run_id,
@@ -452,7 +455,22 @@ class NL2SQLPipeline:
                     turn_id=result.turn_id or "",
                 )
         finally:
-            _EMIT_BUFFER.reset(token)
+            # 客户端断开时生成器被关闭（GeneratorExit 不走 except/else），
+            # 这里把运行状态收敛，避免运行目录长期停留在 running
+            if not finished and self.run_store is not None:
+                try:
+                    self.run_store.finish_run(
+                        user_id, run_id, status=RUN_STATUS_ERROR,
+                        error="执行被中断（客户端断开连接）",
+                    )
+                except Exception:
+                    logger.warning("中断收尾失败：run_id=%s", run_id)
+            try:
+                _EMIT_BUFFER.reset(token)
+            except (ValueError, RuntimeError):
+                # 生成器可能在另一个上下文/线程中被关闭，此时复位令牌会报错；
+                # 该上下文即将销毁，忽略即可
+                pass
         return result
 
     def run(self, question: str, session_id: str = None,

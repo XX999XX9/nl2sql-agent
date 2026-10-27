@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import get_prompt_optimizer
+from app.api.eval_access import require_eval_access
 from app.optimizer.prompt_optimizer import PromptOptimizer
 from app.optimizer.strategies import STRATEGIES
 from app.schemas.common import ApiResponse
@@ -16,7 +17,8 @@ from app.utils.logger_handler import setup_logger
 from app.utils.path_tool import BACKEND_ROOT
 
 logger = setup_logger()
-router = APIRouter()
+# 提示词优化属于内部工具，不对外开放：整个路由统一要求评测口令签发的令牌
+router = APIRouter(dependencies=[Depends(require_eval_access)])
 
 
 @router.get("/strategies")

@@ -9,15 +9,16 @@ nl2sql-agent/
 │   │   ├── api/                            # API 接口层
 │   │   │   ├── __init__.py                 # 路由包初始化（空）
 │   │   │   ├── deps.py                     # 依赖注入：lru_cache 全局单例（ModelFactory/SessionRunStore/RedisCheckpointSaver/Projection/ConversationManager/ResultCache/NL2SQLPipeline/PromptOptimizer）；get_user_id 解析 X-User-Id 请求头（URL 编码，剔除冒号与控制字符）实现用户隔离；Projection 绑定同一张编译后的图读取检查点历史
+│   │   │   ├── eval_access.py              # 评测/提示词内部工具的后端访问控制：口令校验（compare_digest）→ 签发 HMAC-SHA256 无状态令牌（过期时间.签名，默认 7200s）→ require_eval_access 依赖校验 X-Eval-Token；密钥走 NL2SQL_EVAL_SECRET
 │   │   │   └── routes/
 │   │   │       ├── __init__.py             # 路由注册汇总，供main.py统一include_router；prompt_optimize 路由受 agent.yml features.prompt_optimize 开关控制（关闭时不注册）
-│   │   │       ├── chat.py                 # 对话接口双出口共享同一pipeline：POST /api/chat 非流式JSON聚合结果；POST /api/chat/stream SSE流式逐事件推送（intent→sql→executing→correcting→explanation→result→usage→done/error）
+│   │   │       ├── chat.py                 # 对话接口双出口共享同一pipeline：POST /api/chat 非流式JSON聚合结果；POST /api/chat/stream SSE流式逐事件推送（intent→sql→executing→correcting→explanation→result→usage→done/error）；断连时 BackgroundTask 关闭生成器，由 iter_run 的 finally 收敛运行状态
 │   │   │       ├── result.py               # 结果接口：按query_id从结果缓存分页拉取数据（GET /api/result/{query_id}?page&page_size），支撑前端翻页
 │   │   │       ├── session.py              # 会话接口：创建/列表/详情/删除多轮对话会话（POST/GET/GET/{id}/DELETE /api/session），按用户隔离
 │   │   │       ├── traces.py               # Trace 接口：GET /api/traces（按会话列运行）、GET /api/traces/{run_id}（检查点历史投影：节点/状态/事件/下一步）
-│   │   │       ├── eval_logs.py            # 评测日志审查台接口：GET /api/eval/runs（latest/fail_tests/all_history/history 四组）、GET /api/eval/run（错误分类与库名筛选、结果集瘦身，路径约束防穿越）
+│   │   │       ├── eval_logs.py            # 评测日志审查台接口：POST /api/eval/auth 口令校验并签发令牌；GET /api/eval/runs（latest/fail_tests/all_history/history 四组）、GET /api/eval/run（错误分类与库名筛选、结果集瘦身，路径约束防穿越）；读接口统一要求 X-Eval-Token
 │   │   │       ├── schema_info.py          # 元信息接口：返回已接入的表列表与字段结构（/api/schema/tables）、语义映射（/api/schema/semantic-map），供前端"数据字典"面板展示
-│   │   │       └── prompt_optimize.py      # 提示词优化接口（5端点）：策略列表/文件列表/读文件/提交优化（可选A/B评估）/写回提示词文件（自动.bak备份，受allow_write_back控制）
+│   │   │       └── prompt_optimize.py      # 提示词优化接口（5端点）：策略列表/文件列表/读文件/提交优化（可选A/B评估）/写回提示词文件（自动.bak备份，受allow_write_back控制）；整组路由级 require_eval_access 鉴权，不对外开放
 │   │   │
 │   │   ├── persistence/                    # 事实源接入层（LangGraph 检查点 + 目录索引投影）
 │   │   │   ├── __init__.py                 # persistence 包初始化
@@ -47,10 +48,10 @@ nl2sql-agent/
 │   │   │   ├── term_mapper.py              # 业务术语映射（语义层）：读取semantic_map.yml，识别问题中业务术语按最长匹配去重，将"营收→SUM(total_money)"类业务黑话翻译为表/字段/聚合/条件四类表达注入Prompt
 │   │   │   ├── sql_generator.py            # SQL生成核心：组装Prompt（extra_context前置+模板+Schema上下文+【表关联关系】区块+用户问题）调用LLM；query/dml双模板（dml模板无relation占位符单独format）；tables参数支持Schema检索命中表子集注入，关系图谱据此只注入候选表间的关联边；从输出提取SQL（```sql块→任意代码块→裸语句兜底），返回结构化结果含token usage
 │   │   │   ├── sql_validator.py            # SQL静态校验：sqlglot AST解析——多条语句拼接拦截、无ON/USING的JOIN笛卡尔积拦截（features.join_static_check开关，逗号连接FROM a,b同样拦截，显式CROSS/NATURAL JOIN意图明确放行，错误kind=join回喂纠错）、表名/字段名真实存在校验（防幻觉表/字段，CTE名视为合法表，别名/派生列跳过静态验证）；失败产出结构化错误（kind: syntax/table/column/join）供纠错链路回喂
-│   │   │   ├── sql_guard.py                # 安全守卫：关键词粗筛（含注释剥离防绕过）+ AST细筛（解析失败/多语句/非SELECT拦截）双重过滤；SELECT自动追加强制LIMIT（forced_limit）；与数据库只读账号形成双保险
+│   │   │   ├── sql_guard.py                # 安全守卫：关键词粗筛（含注释剥离防绕过；覆盖写操作/文件读写/information_schema/SLEEP/BENCHMARK/GET_LOCK/RELEASE_LOCK/UPDATEXML/EXTRACTVALUE）+ AST细筛（解析失败/多语句/非SELECT拦截）双重过滤；SELECT自动追加强制LIMIT（forced_limit）；与数据库只读账号形成双保险
 │   │   │   ├── fanout_checker.py           # JOIN扇出检测（features.fanout_check总开关+nl2sql.yml fanout.mode=off/static/dynamic）：关系图谱给出多对一方向后做AST风险识别——全局COUNT(*)与一端表列SUM/AVG危险（GROUP BY一端主键时的COUNT(*)属每组计数放行），COUNT/SUM(DISTINCT)与多端列聚合安全；static零数据库开销产中文风险提示，dynamic再执行AST改写的COUNT(*) vs COUNT(DISTINCT驱动表主键)计数对比确认放大倍数；无法分析（UNION/派生表/复合主键）一律放行；只触发一次纠错、不直接终止查询
 │   │   │   ├── explain_gate.py             # EXPLAIN 性能门禁（features.explain_gate）：执行前跑 EXPLAIN，仅当真实表 type=ALL 且 key=NULL 且估算行数≥阈值时拦截；把执行计划与真实索引名回喂 LLM 做性能重写，opt_rounds 独立计数（≤2，不占纠错轮次），第 3 次仍命中也放行；EXPLAIN 或重写失败一律放行不阻断
-│   │   │   ├── sql_executor.py             # SQL执行：SQLAlchemy连接池+PyMySQL、SET max_execution_time超时控制、错误分类（syntax/permission/timeout/other供纠错消费）、结果行数截断（result_row_limit）与行数据规范化（datetime→ISO、Decimal→float）；截断时COUNT(*)包装查真实总行数（未截断total=-1由pipeline填行数）
+│   │   │   ├── sql_executor.py             # SQL执行：SQLAlchemy连接池+PyMySQL；统一 _connect() 上下文管理器为所有查询（主查询/COUNT/EXPLAIN/索引）设置 SET max_execution_time（不支持时降级）；错误分类（syntax/permission/timeout/other供纠错消费）、结果行数截断（result_row_limit）与行数据规范化（datetime→ISO、Decimal→float）；截断时COUNT(*)包装查真实总行数（未截断total=-1由pipeline填行数）
 │   │   │   ├── result_cache.py             # 结果缓存：query_id→结果集（LRU容量50+TTL 30分钟淘汰），get_page分页读取支撑前端翻页与CSV导出；由pipeline执行成功后写入
 │   │   │   ├── self_corrector.py           # 自动纠错链路（features.self_correction开关）：诊断+回喂重写——执行/校验失败（含笛卡尔积kind=join、JOIN扇出风险）回喂错误重写SQL，rewrite()接收候选表以注入关系键区块；diagnose_zero_row诊断0行结果中WHERE等值条件值不在库采样值中（合法0行不触发），值缺失时把该列真实取值一并回喂让模型改用正确值；每轮重写产物仍需过校验+守卫；最多N轮（nl2sql.yml correction.max_rounds）
 │   │   │   ├── sql_explainer.py            # SQL解释生成：调用LLM将最终SQL翻译为业务化中文阐释（用到的表/条件/聚合/排序），并按白名单输出 conform/risk/unknown 一致性裁判标签；features.sql_explainer 可关闭，失败返回空串不阻断主链路
@@ -126,14 +127,15 @@ nl2sql-agent/
 │   │
 │   ├── run.py                              # 启动脚本：以uvicorn启动FastAPI（host/port/debug从环境变量读取）
 │   ├── requirements.txt                    # 后端依赖：fastapi、uvicorn、pydantic、sqlglot、sqlalchemy+pymysql/aiomysql、openai、langgraph（流水线编排）、langgraph-checkpoint-redis（官方检查点）、redis、chromadb、tiktoken、PyYAML
-│   └── Dockerfile                          # （待补充：docker-compose.yml backend服务引用./backend构建，但Dockerfile尚未提供）
+│   ├── Dockerfile                          # 后端镜像：python:3.11-slim + gcc/g++（编译型依赖）+ pip 安装 requirements，CMD python run.py
+│   ├── .dockerignore                       # 构建排除：.env、__pycache__、data/、logs/ 等，避免密钥与运行产物进镜像
 │
 ├── frontend/                               # 前端工程根目录（HTML/CSS/JS原生实现，无构建步骤）
 │   ├── login.html                          # 登录页：仅输入用户名（localStorage），支持 next 回跳
 │   ├── index.html                          # 主页面：三栏布局（会话列表/对话区/数据字典）+顶栏（映射表/日志/切换用户）+输入区，按依赖序引入库与模块脚本
-│   ├── eval_logs.html                      # 评测日志审查台：口令门（666，sessionStorage）+错误类型勾选筛选+gold/pred 左右并排（≤560px 上下堆叠）+右上角 Trace 入口
+│   ├── eval_logs.html                      # 评测日志审查台：口令门（后端校验并签发令牌，页面脚本通过后才加载）+错误类型勾选筛选+gold/pred 左右并排（≤560px 上下堆叠）+右上角 Trace 入口
 │   ├── traces.html                         # Trace 页：按 run_id 展示检查点历史（节点/下一步/事件/状态预览）
-│   ├── prompt_optimize.html                # 提示词优化工作台：左输入区（文件加载/策略选择/额外要求/评估开关）+右结果区（修改说明/双栏diff/评估对比/写回）
+│   ├── prompt_optimize.html                # 提示词优化工作台：口令门（同评测令牌）+左输入区（文件加载/策略选择/额外要求/评估开关）+右结果区（修改说明/双栏diff/评估对比/写回）
 │   ├── nginx.conf                          # Nginx配置：托管前端静态资源，/api反向代理到后端容器
 │   │
 │   └── static/
@@ -172,7 +174,7 @@ nl2sql-agent/
 │           ├── highlight.min.js            # 代码高亮库（含SQL语法支持）
 │           └── sql-formatter.min.js        # SQL格式化库：SQL语句缩进美化展示
 │
-├── docker-compose.yml                      # Docker编排：redis（镜像 redis:8，内置 RedisJSON/RediSearch，AOF 落盘）+backend服务（挂载 data/config/prompts/logs，NL2SQL_REDIS_URL 指向 redis）+frontend服务（nginx:alpine 静态托管与 /api 反代）
+├── docker-compose.yml                      # Docker编排：redis（镜像 redis:8，内置 RedisJSON/RediSearch，AOF 落盘）+backend服务（build ./backend，env_file 注入 .env 密钥，挂载 data/config/prompts/logs，NL2SQL_REDIS_URL 指向 redis，NL2SQL_SERVE_FRONTEND=false）+frontend服务（nginx:alpine 静态托管与 /api 反代）
 ├── scripts/
 │   ├── start_backend.sh                    # 后端启动脚本：安装依赖并以指定端口启动uvicorn
 │   ├── start_frontend.sh                   # 前端启动脚本：开发环境起静态服务器/加载Nginx

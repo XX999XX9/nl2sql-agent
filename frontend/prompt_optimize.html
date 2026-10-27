@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-auth="logs" data-auth-script="static/js/prompt_optimize.js?v=2">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -83,6 +83,7 @@
 
     <script src="static/js/utils.js"></script>
     <script src="static/js/api.js"></script>
-    <script src="static/js/prompt_optimize.js"></script>
+    <!-- 口令门：服务端校验通过后才加载页面脚本（与评测日志页同一套令牌） -->
+    <script src="static/js/auth.js"></script>
   </body>
 </html>

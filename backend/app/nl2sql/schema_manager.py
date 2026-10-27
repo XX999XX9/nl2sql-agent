@@ -17,6 +17,7 @@ class SchemaManager:
 
     def __init__(self):
         self._db_config = load_yaml(BACKEND_ROOT / "config" / "database.yml")["database"]
+        self._execution_timeout = int(self._db_config.get("execution_timeout", 30))
         self._tables: Dict[str, List[dict]] = {}   # 表名 -> 字段列表
         self._table_comments: Dict[str, str] = {}
         self._foreign_keys: Dict[str, List[dict]] = {}  # 表名 -> 外键列表（见 refresh 中结构）
@@ -29,6 +30,11 @@ class SchemaManager:
         conn = self._connect()
         try:
             with conn.cursor() as cur:
+                # 元数据查询本身很快，但大库上 COLUMNS/KEY_COLUMN_USAGE 仍可能变慢，
+                # 与会话级超时口径统一，避免刷新把连接长期占住
+                cur.execute(
+                    f"SET SESSION max_execution_time = {self._execution_timeout * 1000}"
+                )
                 cur.execute(
                     "SELECT TABLE_NAME, TABLE_COMMENT FROM information_schema.TABLES "
                     "WHERE TABLE_SCHEMA = %s AND TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME",

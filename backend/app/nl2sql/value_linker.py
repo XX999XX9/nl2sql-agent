@@ -84,6 +84,7 @@ class ValueLinker:
         self._db_config = load_yaml(BACKEND_ROOT / "config" / "database.yml")["database"]
         agent_cfg = load_yaml(BACKEND_ROOT / "config" / "agent.yml")
         self._enabled = agent_cfg.get("features", {}).get("value_linker", True)
+        self._execution_timeout = int(self._db_config.get("execution_timeout", 30))
         self._samples: Dict[str, List[str]] = {}   # "table.column" -> [值...]
         self._sampled_at = 0.0
 
@@ -99,6 +100,11 @@ class ValueLinker:
         skipped_high_card = 0
         try:
             with conn.cursor() as cur:
+                # COUNT(DISTINCT)/DISTINCT 采样在宽表上是真正的重查询，
+                # 必须与会话级超时对齐，避免采样把连接长期占住
+                cur.execute(
+                    f"SET SESSION max_execution_time = {self._execution_timeout * 1000}"
+                )
                 cur.execute(
                     "SELECT TABLE_NAME, COLUMN_NAME FROM information_schema.COLUMNS "
                     "WHERE TABLE_SCHEMA = %s AND DATA_TYPE IN ('varchar', 'char') "

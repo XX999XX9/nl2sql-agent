@@ -248,8 +248,13 @@ bash scripts/start_frontend.sh nginx            # 前端静态托管 + /api 反�
 ### Docker
 
 ```bash
-docker-compose up -d
+cp backend/.env.example backend/.env 2>/dev/null || true   # 首次：填写 LLM / MySQL 凭据
+docker compose up -d --build                                # redis + backend + frontend
 ```
+
+- `backend/.env` 由 compose 的 `env_file` 注入容器（密钥不写进镜像）
+- 前端由 nginx 容器托管并反代 `/api`，后端设 `NL2SQL_SERVE_FRONTEND=false`
+- 访问 http://localhost/（后端 API 直连端口为 8002）
 
 ### 大库模式（表数 ≥ 30 时建议开启）
 
