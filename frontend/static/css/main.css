@@ -1,9 +1,23 @@
 /* 全局样式：变量定义、重置样式、布局、响应式适配 */
 
 :root {
-  --primary-color: #4f46e5;
-  --bg-color: #f5f5f5;
-  --text-color: #1f2937;
+  /* 石墨极简：黑白灰主色 + 单一红色仅用于错误 */
+  --primary-color: #111111;
+  --primary-hover: #000000;
+  --bg-color: #f4f4f5;
+  --text-color: #18181b;
+  --text-2: #52525b;
+  --text-3: #a1a1aa;
+  --border-color: #e4e4e7;
+  --border-strong: #d4d4d8;
+  --surface: #ffffff;
+  --surface-2: #fafafa;
+  --surface-3: #f4f4f5;
+  --danger: #dc2626;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
 }
 
 * {
@@ -30,13 +44,15 @@ body {
   justify-content: space-between;
   gap: 16px;
   padding: 8px 16px;
-  border-bottom: 1px solid #e5e7eb;
-  background: #fff;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--surface);
 }
 
 .app-header h1 {
   font-size: 18px;
   line-height: 1;
+  font-weight: 800;
+  letter-spacing: -0.02em;
 }
 
 /* 顶栏左：会话开关 + 标题；右：文字入口 + 当前用户 */
@@ -57,22 +73,23 @@ body {
 .nav-link {
   display: inline-flex;
   align-items: center;
-  padding: 5px 10px;
-  border: none;
-  border-radius: 6px;
+  padding: 6px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
   background: none;
-  color: #374151;
+  color: var(--text-2);
   font-size: 13px;
   font-family: inherit;
   line-height: 1;
   text-decoration: none;
   cursor: pointer;
   white-space: nowrap;
+  transition: color 0.15s, background 0.15s;
 }
 
 .nav-link:hover {
-  background: #f3f4f6;
-  color: var(--primary-color);
+  background: var(--surface-3);
+  color: var(--text-color);
 }
 
 /* 页面顶栏右侧操作区（评测日志 / Trace 页共用） */
@@ -85,30 +102,41 @@ body {
 
 .chat-box {
   flex: 1;
+  min-width: 0;
   overflow-y: auto;
-  padding: 16px 4px;
+  padding: 16px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
 }
 
 .chat-input-bar {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  padding: 10px 16px;
-  border-top: 1px solid #e5e7eb;
-  background: #fff;
+  margin: 0 8px 8px;
+  padding: 12px 16px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
 }
 
 .chat-input-bar input {
   flex: 1;
-  padding: 10px 12px;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
+  padding: 11px 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
   font-size: 14px;
   outline: none;
+  background: var(--surface);
+  color: var(--text-color);
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 
 .chat-input-bar input:focus {
   border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px rgba(17, 17, 17, 0.08);
 }
 
 .message {
@@ -118,8 +146,13 @@ body {
 }
 
 @media (max-width: 768px) {
-  #app {
-    padding: 8px;
+  .app-body {
+    gap: 6px;
+    padding: 6px;
+  }
+
+  .chat-input-bar {
+    margin: 0 6px 6px;
   }
 
   .message {
@@ -127,18 +160,21 @@ body {
   }
 }
 
-/* ===== 三栏布局：会话栏 | 对话区 | 数据字典栏 ===== */
+/* ===== 三栏布局：会话栏 | 对话区 | 数据字典栏（VS Code 式浮动模块） ===== */
 .app-body {
   display: flex;
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  gap: 8px;
+  padding: 8px;
 }
 
 .side-panel {
   width: 240px;
-  background: #f9fafb;
-  border-right: 1px solid #e5e7eb;
+  background: var(--surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -146,8 +182,6 @@ body {
 }
 
 .dict-panel {
-  border-right: none;
-  border-left: 1px solid #e5e7eb;
   width: 280px;
 }
 
@@ -155,11 +189,12 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 10px 14px;
-  font-size: 14px;
-  font-weight: 600;
-  color: #374151;
-  border-bottom: 1px solid #e5e7eb;
+  padding: 12px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--text-color);
+  border-bottom: 1px solid var(--border-color);
 }
 
 /* 顶栏图标按钮 */
@@ -168,13 +203,15 @@ body {
   border: none;
   font-size: 18px;
   cursor: pointer;
-  color: #6b7280;
+  color: var(--text-2);
   padding: 4px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
+  transition: background 0.15s, color 0.15s;
 }
 
 .icon-btn:hover {
-  background: #f3f4f6;
+  background: var(--surface-3);
+  color: var(--text-color);
 }
 
 /* 响应式：窄屏隐藏侧栏 */
@@ -225,20 +262,22 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 8px 10px;
-  border-radius: 6px;
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   font-size: 13px;
-  color: #374151;
+  color: var(--text-2);
+  transition: background 0.15s, color 0.15s;
 }
 
 .session-item:hover {
-  background: #eef2ff;
+  background: var(--surface-3);
+  color: var(--text-color);
 }
 
 .session-item.active {
-  background: #e0e7ff;
-  color: #3730a3;
+  background: var(--primary-color);
+  color: #fff;
 }
 
 .session-title {
@@ -251,14 +290,14 @@ body {
 .session-del {
   border: none;
   background: none;
-  color: #9ca3af;
+  color: var(--text-3);
   cursor: pointer;
   font-size: 14px;
   padding: 0 4px;
 }
 
 .session-del:hover {
-  color: #dc2626;
+  color: var(--danger);
 }
 
 .btn-sm {
@@ -275,14 +314,14 @@ body {
 }
 
 .dict-empty {
-  color: #9ca3af;
+  color: var(--text-3);
   text-align: center;
   padding: 20px 0;
 }
 
 .dict-section-title {
   font-weight: 600;
-  color: #374151;
+  color: var(--text-color);
   margin: 10px 0 6px;
   font-size: 13px;
 }
@@ -293,17 +332,17 @@ body {
   gap: 4px;
   padding: 4px 2px;
   cursor: pointer;
-  color: #1f2937;
+  color: var(--text-color);
 }
 
 .dict-caret {
-  color: #9ca3af;
+  color: var(--text-3);
   width: 12px;
 }
 
 .dict-table-name {
   font-weight: 500;
-  color: #4f46e5;
+  color: var(--text-color);
 }
 
 .dict-table-name:hover {
@@ -311,7 +350,7 @@ body {
 }
 
 .dict-table-comment {
-  color: #9ca3af;
+  color: var(--text-3);
 }
 
 .dict-columns {
@@ -323,20 +362,22 @@ body {
   align-items: center;
   gap: 6px;
   padding: 2px 0;
-  color: #4b5563;
+  color: var(--text-2);
 }
 
 .dict-col-name {
-  color: #1f2937;
+  color: var(--text-color);
   min-width: 90px;
 }
 
 .dict-col-type {
-  color: #059669;
+  color: var(--text-2);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
 }
 
 .dict-col-comment {
-  color: #9ca3af;
+  color: var(--text-3);
   flex: 1;
   white-space: nowrap;
   overflow: hidden;
@@ -345,19 +386,24 @@ body {
 
 .tag {
   font-size: 10px;
-  padding: 0 4px;
-  border-radius: 3px;
+  padding: 0 6px;
+  border-radius: var(--radius-pill);
   line-height: 16px;
+  border: 1px solid var(--border-color);
+  background: var(--surface);
+  color: var(--text-2);
 }
 
 .tag-pk {
-  background: #fef3c7;
-  color: #b45309;
+  background: var(--primary-color);
+  border-color: var(--primary-color);
+  color: #fff;
 }
 
 .tag-idx {
-  background: #e0e7ff;
-  color: #4338ca;
+  background: var(--surface-3);
+  border-color: var(--border-strong);
+  color: var(--text-2);
 }
 
 .dict-sem-group {
@@ -365,7 +411,7 @@ body {
 }
 
 .dict-sem-title {
-  color: #6b7280;
+  color: var(--text-2);
   margin-bottom: 2px;
 }
 
@@ -377,19 +423,19 @@ body {
 }
 
 .dict-sem-term {
-  color: #1f2937;
+  color: var(--text-color);
   white-space: nowrap;
 }
 
 .dict-sem-arrow {
-  color: #9ca3af;
+  color: var(--text-3);
 }
 
 .dict-sem-expr {
-  color: #4f46e5;
-  background: #eef2ff;
-  padding: 0 4px;
-  border-radius: 3px;
+  color: var(--text-2);
+  background: var(--surface-3);
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
   font-size: 11px;
   white-space: nowrap;
   overflow: hidden;

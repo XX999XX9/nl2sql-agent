@@ -137,7 +137,7 @@
     html.push(`<div class="trace-head">
       <h2>${escapeHtml(trace.question || "(空问题)")}</h2>
       <div class="sub">
-        <span>状态：<b style="color:${status === "error" ? "#dc2626" : "#16a34a"}">${STATUS_TEXT[status] || status}</b></span>
+        <span>状态：<b style="color:${status === "error" ? "#dc2626" : "#111111"}">${STATUS_TEXT[status] || status}</b></span>
         <span>开始：${fmtTime(trace.started_at)}</span>
         <span>耗时：${fmtDuration(trace)}</span>
         <span>检查点：${steps.length} 个</span>

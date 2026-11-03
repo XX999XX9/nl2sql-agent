@@ -51,9 +51,9 @@ function accClass(v) {
   return "bad";
 }
 function barColor(v) {
-  if (v == null) return "#9ca3af";
-  if (v >= 0.9) return "#16a34a";
-  if (v >= 0.75) return "#d97706";
+  if (v == null) return "#a1a1aa";
+  if (v >= 0.9) return "#111111";
+  if (v >= 0.75) return "#71717a";
   return "#dc2626";
 }
 function fmtTokens(n) {
