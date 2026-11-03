@@ -40,6 +40,13 @@ from sqlglot import exp
 from app.formatter.output_formatter import OutputFormatter
 from app.metrics.turn_tracker import TurnTracker
 from app.model.factory import ModelFactory
+from app.observability.langfuse_client import (
+    get_tracer,
+    reset_current_span,
+    reset_current_trace,
+    set_current_span,
+    set_current_trace,
+)
 from app.nl2sql.conversation import ConversationManager
 from app.persistence.redis_checkpointer import RedisCheckpointSaver
 from app.persistence.redis_store import thread_id_for
@@ -186,6 +193,38 @@ def _emit(event_type: str, data: dict):
 _UNSET = object()   # 区分“没传 checkpointer”和“显式传 None（关闭检查点）”
 
 
+def _trace_output(result: PipelineResult) -> dict:
+    """根 trace 的输出摘要：只放排障/复盘需要的关键信息，避免推整份结果集"""
+    return {
+        "intent": result.intent,
+        "sql": (result.sql or "")[:1500] or None,
+        "answer": (result.answer or "")[:800] or None,
+        "row_count": len(result.rows),
+        "total": result.total,
+        "sql_label": result.sql_label or None,
+        "need_clarification": result.need_clarification,
+        "error": result.error,
+        "error_kind": result.error_kind,
+    }
+
+
+def _trace_metadata(result: PipelineResult) -> dict:
+    """根 trace 的元数据：usage（分步耗时/token）+ 纠错/优化/能力治理轨迹审计"""
+    return {
+        "run_id": result.run_id,
+        "turn_id": result.turn_id,
+        "session_id": result.session_id,
+        "intent": result.intent,
+        "usage": result.usage,
+        "corrections": len(result.correction_trail),
+        "opt_rounds": len(result.optimization_trail),
+        # 能力治理审计：每轮申请/放行/拒绝（含规则 ID 与原因）
+        "capability_trail": result.capability_trail,
+        "term_mappings": result.term_mappings[:20],
+        "value_mappings": result.value_mappings[:20],
+    }
+
+
 class NL2SQLPipeline:
     """NL2SQL 完整流水线编排入口（LangGraph StateGraph）"""
 
@@ -298,16 +337,56 @@ class NL2SQLPipeline:
     # ==================================================================
     # 图构建：节点 + 条件边
     # ==================================================================
-    def _traced(self, node):
-        """节点包装：把该节点执行期间 _emit 出的事件一并写进状态。
+    def _traced(self, node, name: str = None):
+        """节点包装：把该节点执行期间 _emit 出的事件一并写进状态，
+        同时在 Langfuse 上开一个同名的节点 span（记录耗时、token 与产出事件）。
 
         这样每个检查点既有“执行了哪个节点”，也有“该节点产出了哪些事件”，
         Trace 投影才能把一次问答的事件还原到它真正发生的步骤上。
-        节点返回值仍是普通 dict，只多一个 events 字段（DeltaChannel 追加）。"""
+        节点返回值仍是普通 dict，只多一个 events 字段（DeltaChannel 追加）。
+        观测是旁路：未启用 Langfuse 时 span 为 None，逻辑与之前完全一致。"""
+        node_name = name or getattr(node, "__name__", "node")
+
         def wrapped(state):
             buffer = _EMIT_BUFFER.get()
             start = len(buffer) if buffer is not None else 0
-            ret = node(state) or {}
+            tracer = get_tracer()
+            span = None
+            span_token = None
+            if tracer is not None:
+                try:
+                    span = tracer.node_span(
+                        state.get("run_id", ""), node_name,
+                        metadata={
+                            "node": node_name,
+                            "attempt": state.get("attempt", 0),
+                            "opt_rounds": state.get("opt_rounds", 0),
+                        },
+                    )
+                    span_token = set_current_span(span)
+                except Exception:
+                    span = None
+            try:
+                ret = node(state) or {}
+            except Exception as e:
+                if span is not None:
+                    span.finish(error=f"{type(e).__name__}: {e}",
+                                 metadata={"node": node_name})
+                reset_current_span(span_token)
+                raise
+            reset_current_span(span_token)
+            events = buffer[start:] if buffer is not None else []
+            if span is not None:
+                span.finish(
+                    output={"route": ret.get("route")} if ret.get("route") else None,
+                    metadata={
+                        "node": node_name,
+                        "attempt": state.get("attempt", 0),
+                        "event_types": [e.get("type") for e in events][:20],
+                        "event_count": len(events),
+                        "error_message": (ret.get("error_message") or "")[:300] or None,
+                    },
+                )
             if buffer is None or len(buffer) <= start:
                 return ret
             merged = dict(ret)
@@ -318,25 +397,25 @@ class NL2SQLPipeline:
     def _build_graph(self):
         g = StateGraph(NL2SQLState)
 
-        # ---- 节点注册（统一包一层事件采集） ----
-        g.add_node("intent", self._traced(self._n_intent))
-        g.add_node("q_context", self._traced(self._n_q_context))
-        g.add_node("q_select", self._traced(self._n_q_select))
-        g.add_node("q_perf", self._traced(self._n_q_perf))
-        g.add_node("q_opt_correct", self._traced(self._n_q_opt_correct))
-        g.add_node("q_generate", self._traced(self._n_q_generate))
-        g.add_node("q_validate", self._traced(self._n_q_validate))
-        g.add_node("q_guard", self._traced(self._n_q_guard))
-        g.add_node("q_fanout", self._traced(self._n_q_fanout))
-        g.add_node("q_execute", self._traced(self._n_q_execute))
-        g.add_node("q_correct", self._traced(self._n_q_correct))
-        g.add_node("q_cache", self._traced(self._n_q_cache))
-        g.add_node("q_explain", self._traced(self._n_q_explain))
-        g.add_node("d_context", self._traced(self._n_d_context))
-        g.add_node("d_generate", self._traced(self._n_d_generate))
-        g.add_node("d_explain", self._traced(self._n_d_explain))
-        g.add_node("m_answer", self._traced(self._n_meta))
-        g.add_node("finalize", self._traced(self._n_finalize))
+        # ---- 节点注册（统一包一层事件采集 + Langfuse 节点 span） ----
+        g.add_node("intent", self._traced(self._n_intent, "intent"))
+        g.add_node("q_context", self._traced(self._n_q_context, "q_context"))
+        g.add_node("q_select", self._traced(self._n_q_select, "q_select"))
+        g.add_node("q_perf", self._traced(self._n_q_perf, "q_perf"))
+        g.add_node("q_opt_correct", self._traced(self._n_q_opt_correct, "q_opt_correct"))
+        g.add_node("q_generate", self._traced(self._n_q_generate, "q_generate"))
+        g.add_node("q_validate", self._traced(self._n_q_validate, "q_validate"))
+        g.add_node("q_guard", self._traced(self._n_q_guard, "q_guard"))
+        g.add_node("q_fanout", self._traced(self._n_q_fanout, "q_fanout"))
+        g.add_node("q_execute", self._traced(self._n_q_execute, "q_execute"))
+        g.add_node("q_correct", self._traced(self._n_q_correct, "q_correct"))
+        g.add_node("q_cache", self._traced(self._n_q_cache, "q_cache"))
+        g.add_node("q_explain", self._traced(self._n_q_explain, "q_explain"))
+        g.add_node("d_context", self._traced(self._n_d_context, "d_context"))
+        g.add_node("d_generate", self._traced(self._n_d_generate, "d_generate"))
+        g.add_node("d_explain", self._traced(self._n_d_explain, "d_explain"))
+        g.add_node("m_answer", self._traced(self._n_meta, "m_answer"))
+        g.add_node("finalize", self._traced(self._n_finalize, "finalize"))
 
         # ---- 骨架 ----
         g.add_edge(START, "intent")
@@ -434,13 +513,34 @@ class NL2SQLPipeline:
             self.run_store.start_run(user_id, run_id, session_id, thread_id, question)
 
         token = _EMIT_BUFFER.set([])
+        # Langfuse 根 trace：一轮问答一条 trace；未启用时 root 为 None（全链路空操作）
+        tracer = get_tracer()
+        root = None
+        trace_token = None
+        if tracer is not None:
+            root = tracer.start_trace(
+                run_id,
+                input={"question": question},
+                user_id=user_id,
+                session_id=session_id or "",
+                metadata={
+                    "run_id": run_id,
+                    "user_id": user_id,
+                    "session_id": session_id or "",
+                    "question": question,
+                    "reference_turn_id": reference_turn_id,
+                },
+            )
+            trace_token = set_current_trace(root)
         finished = False
+        stream_error = None
         try:
             # custom 通道透出各节点 _emit 的事件；结束后经 StopIteration.value 返回 result
             yield from (chunk for chunk in self.graph.stream(
                 initial, config, stream_mode="custom"))
         except Exception as e:
             finished = True
+            stream_error = str(e)
             if self.run_store is not None:
                 self.run_store.finish_run(
                     user_id, run_id, status=RUN_STATUS_ERROR, error=str(e))
@@ -465,6 +565,18 @@ class NL2SQLPipeline:
                     )
                 except Exception:
                     logger.warning("中断收尾失败：run_id=%s", run_id)
+            if tracer is not None and root is not None:
+                try:
+                    tracer.finish_trace(
+                        root,
+                        output=_trace_output(result),
+                        metadata=_trace_metadata(result),
+                        error=stream_error or result.error or (
+                            None if finished else "执行被中断（客户端断开连接）"),
+                    )
+                except Exception:
+                    logger.debug("Langfuse trace 收尾失败（忽略）", exc_info=True)
+            reset_current_trace(trace_token)
             try:
                 _EMIT_BUFFER.reset(token)
             except (ValueError, RuntimeError):

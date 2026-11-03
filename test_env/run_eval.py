@@ -139,6 +139,59 @@ def write_detail_row(out_dir: Path, row: dict):
         f.flush()
 
 
+# ----------------------------------------------------------- Langfuse 评测上报（可选）
+# 开关：NL2SQL_LANGFUSE=on 打开观测；NL2SQL_LANGFUSE_EVAL=on 才会上报 Dataset/Score。
+# 自研明细（detail_pass/detail_fail/summary）始终是评测事实源，Langfuse 只是补充视图。
+_DATASET_SYNCED = False
+
+
+def langfuse_eval_tracer():
+    """返回可用的观测 tracer；未开启观测或未开启评测上报时返回 None"""
+    from app.observability.langfuse_client import eval_report_enabled, get_tracer
+    if not eval_report_enabled():
+        return None
+    return get_tracer()
+
+
+def sync_langfuse_dataset(tracer, by_db):
+    """把本次评测题集同步为 Langfuse Dataset（同 id 幂等，进程内只同步一次）"""
+    global _DATASET_SYNCED
+    if tracer is None or _DATASET_SYNCED:
+        return
+    items = []
+    for db, queries in by_db.items():
+        for q in queries:
+            items.append({
+                "id": f"{db}:{q['id']}",
+                "input": {"question": q["question"], "database": db},
+                "expected_output": {"sql": q["sql"]},
+                "metadata": {"database": db, "question_id": q["id"]},
+            })
+    if tracer.ensure_dataset("nl2sql-eval", items,
+                             description="NL2SQL 执行准确率评测集（Spider 子集）"):
+        _DATASET_SYNCED = True
+        print(f"  Langfuse Dataset 已同步：nl2sql-eval（{len(items)} 条）", flush=True)
+
+
+def report_langfuse_scores(tracer, run_id: str, row: dict):
+    """把单题评测结论写成 trace Score（执行准确率/列序宽容/错误类型）"""
+    if tracer is None:
+        return
+    status = row.get("status")
+    if status not in ("pass", "fail"):
+        return
+    tracer.score_run(
+        run_id, "execution_accuracy", 1.0 if status == "pass" else 0.0,
+        data_type="BOOLEAN",
+        comment=f"{row.get('database')}:{row.get('id')} {status}",
+    )
+    if status == "pass" and row.get("col_reordered"):
+        tracer.score_run(run_id, "col_reordered", 1.0, data_type="BOOLEAN",
+                         comment="列顺序不同但值一致（宽容通过）")
+    if row.get("error_kind"):
+        tracer.score_run(run_id, "error_kind", row["error_kind"], data_type="CATEGORICAL")
+
+
 def ensure_latest_from_legacy():
     """一次性迁移：旧版 detail_run1.jsonl + summary_run1.json → latest/（已存在 latest 则跳过）"""
     if LATEST_DIR.exists():
@@ -385,6 +438,8 @@ def run_round(run_id: int, db_filter=None, limit=None, rerun: bool = False):
 
     conversation = get_conversation_manager()
     cache = get_result_cache()
+    tracer = langfuse_eval_tracer()
+    sync_langfuse_dataset(tracer, by_db)
     t0 = time.time()
 
     for db_idx, (db, queries) in enumerate(sorted(by_db.items()), 1):
@@ -446,6 +501,7 @@ def run_round(run_id: int, db_filter=None, limit=None, rerun: bool = False):
                 row["status"] = "pass" if matched else "fail"
                 row["col_reordered"] = col_reordered   # 仅列顺序不同而宽容通过的标记
             write_detail_row(out_dir, row)
+            report_langfuse_scores(tracer, r.run_id, row)
             mark = {"pass": "✓", "fail": "✗", "gold_error": "⊘"}.get(row["status"], "?")
             print(f"  {mark} {q['id'][:8]} {row['status']}"
                   + (f" ({r.error_kind})" if r.error_kind else ""), flush=True)
@@ -458,6 +514,8 @@ def run_round(run_id: int, db_filter=None, limit=None, rerun: bool = False):
 
     elapsed = time.time() - t0
     print(f"\n第 {run_id} 轮执行完毕，耗时 {elapsed / 60:.1f} 分钟，汇总中 ...")
+    if tracer is not None:
+        tracer.flush()      # 批量上报落盘，避免进程退出丢最后一批 span/score
     summary = summarize(out_dir, elapsed, run_id=run_id, started_at=started_at)
     print_failures(out_dir, run_id=run_id)
 

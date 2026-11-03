@@ -96,6 +96,7 @@ def main():
 
     conversation = get_conversation_manager()
     cache = get_result_cache()
+    tracer = ev.langfuse_eval_tracer()      # 可选：NL2SQL_LANGFUSE / NL2SQL_LANGFUSE_EVAL 同时开启才上报
     t0 = time.time()
 
     for db_idx, (db, src_qs) in enumerate(sorted(by_db.items()), 1):
@@ -139,6 +140,7 @@ def main():
                 row["status"] = "pass" if matched else "fail"
                 row["col_reordered"] = col_reordered
             ev.write_detail_row(out_dir, row)
+            ev.report_langfuse_scores(tracer, r.run_id, row)
             mark = {"pass": "✓ 挽回", "fail": "✗ 仍失败", "gold_error": "⊘"}.get(row["status"], "?")
             print(f"  {mark} {q['id'][:8]} {row['status']}"
                   + (f" ({r.error_kind})" if r.error_kind else ""), flush=True)
@@ -149,6 +151,8 @@ def main():
             pass
 
     elapsed = time.time() - t0
+    if tracer is not None:
+        tracer.flush()
     rows = ev.load_detail(out_dir)
     evaluated = [r for r in rows if r.get("status") in ("pass", "fail")]
     rescued = sum(1 for r in evaluated if r["status"] == "pass")

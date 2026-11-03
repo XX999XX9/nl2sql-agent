@@ -6,6 +6,7 @@ from typing import List, Optional
 
 from openai import OpenAI
 
+from app.observability.langfuse_client import clip_messages, clip_text, get_tracer
 from app.utils.config_handler import load_yaml
 from app.utils.logger_handler import setup_logger
 from app.utils.path_tool import BACKEND_ROOT
@@ -103,7 +104,49 @@ class LLMClient:
             kwargs["tools"] = tools
         if tool_choice is not None:
             kwargs["tool_choice"] = tool_choice
-        return self.client.chat.completions.create(**kwargs)
+        # Langfuse generation 埋点（旁路）：未启用时 gen 为 None，行为与此前一致。
+        # 每次真实请求（含 4×/16× 扩容与降级模型）都会单独记一条，成本归因才准确。
+        tracer = get_tracer()
+        gen = None
+        if tracer is not None:
+            gen = tracer.llm_generation(
+                name="llm.chat",
+                model=model,
+                input=clip_messages(messages),
+                model_parameters={
+                    "temperature": kwargs["temperature"],
+                    "max_tokens": max_tokens,
+                    "tool_calling": bool(tools),
+                },
+                metadata={
+                    "is_fallback": bool(model != self.model),
+                    "retry_scale": max(1, int(max_tokens / self.max_tokens)) if self.max_tokens else 1,
+                },
+            )
+        try:
+            resp = self.client.chat.completions.create(**kwargs)
+        except Exception as e:
+            if gen is not None:
+                gen.finish(error=f"{type(e).__name__}: {e}")
+            raise
+        if gen is not None:
+            choice = resp.choices[0] if resp.choices else None
+            usage = getattr(resp, "usage", None)
+            prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0) if usage else 0
+            completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0) if usage else 0
+            total_tokens = int(getattr(usage, "total_tokens", 0) or 0) if usage else 0
+            content = (getattr(choice.message, "content", "") if choice else "") or ""
+            gen.add_usage(prompt_tokens, completion_tokens, total_tokens)
+            gen.finish(
+                output=clip_text(content),
+                metadata={
+                    "finish_reason": (choice.finish_reason if choice else "") or "",
+                    "max_tokens": max_tokens,
+                    "is_fallback": bool(model != self.model),
+                    "tool_calls": len(getattr(choice.message, "tool_calls", None) or []) if choice else 0,
+                },
+            )
+        return resp
 
     def _to_result(self, resp) -> LLMResult:
         msg = resp.choices[0].message if resp.choices else None

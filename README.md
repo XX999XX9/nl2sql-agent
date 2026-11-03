@@ -79,6 +79,14 @@
 - **会话视图**投影检查点状态中的 `turns`（DeltaChannel 增量通道，只保留提问与回答）；**Trace 视图**投影同一线程的检查点历史（节点、状态、事件、下一步）
 - 检查点写入开启 AOF 落盘；每轮 SSE `done` 事件回传 `turn_id`，供前端"引用历史轮"使用
 
+### Langfuse 观测与评测（可选，`app/observability/`）
+- **定位分层**：质检/准确率评测仍以自研 `test_env` 明细与 `eval_logs.html` 为事实源；Agent 运行期观测、跨版本/跨用户分析交给 Langfuse
+- **一轮一问一条 Trace**：根 trace 记录 user/session/run_id 与最终 SQL/答案/错误；每个图节点一个 span，span 的 metadata 带 `elapsed_ms`、`prompt/completion/total tokens` 与产出事件类型；每个节点的 LLM 调用是一条 generation（模型、prompt、补全、usage、finish_reason、是否降级模型/扩容倍数）
+- **成本归因**：token 取模型 API 的 usage（主模型、4×/16× 扩容、fallback 各自独立计费），可按节点/模型/会话聚合
+- **治理审计**：根 trace metadata 附带 `capability_trail`（Skill/Tool 申请、放行、拒绝与规则 ID）、纠错/优化轮次，可直接复盘能力治理决策
+- **评测回流**：`NL2SQL_LANGFUSE_EVAL=on` 时把题集同步为 Dataset，并按题写 `execution_accuracy` / `col_reordered` / `error_kind` Score；自研 summary 不受影响
+- **降级策略**：开关关闭、缺少密钥、SDK 异常、上报失败均静默跳过（纯旁路异步上报），不影响主链路；原 Trace 页面与 `/api/traces` 保留作为降级视图
+
 ### 评测体系（`test_env/`，详见目录内注释）
 - Spider 682 题 / 20 库批量评测：按库分组、断点续跑、冒烟限量、全量 Schema vs 向量检索两轮对比报告、gold 结果跨轮缓存、失败题一键重跑（run_fail.py）
 - 执行准确率口径：值规范化（Decimal 控精度、日期转 ISO）后无序 multiset 比对，行序无关；列数相同前提下仅列顺序不同判等价（明细打 col_reordered 标记可审计）；评测环境 pred/gold 两侧均不截断
@@ -104,7 +112,8 @@ nl2sql-agent/
 │   │   ├── schemas/                 # Pydantic 请求响应模型 + SSE 事件协议定义
 │   │   ├── nl2sql/                  # 核心模块（见下文），含 capabilities/ 能力治理子包
 │   │   ├── persistence/             # 事实源接入：redis_store（连接/键空间）/ redis_checkpointer（官方 RedisSaver 适配）/ store（会话与 Trace 投影）
-│   │   ├── model/factory.py         # LLM / Embedding 客户端工厂（空正文扩容+降级模型）
+│   │   ├── model/factory.py         # LLM / Embedding 客户端工厂（空正文扩容+降级模型+Langfuse generation 埋点）
+│   │   ├── observability/           # Langfuse 观测接入（根 trace/节点 span/generation/评测 Dataset+Score，旁路可关）
 │   │   ├── optimizer/               # 提示词优化（optimizer/evaluator/strategies）
 │   │   ├── formatter/               # 输出规范化（normalizer/output_formatter/templates）
 │   │   ├── metrics/                 # turn_tracker（耗时/分步埋点）+ token_counter
@@ -157,6 +166,11 @@ DB_PASSWORD="xxx"
 DB_HOST="127.0.0.1"
 DB_PORT="3306"
 DB_NAME="test"
+
+# Langfuse 观测（可选；features.langfuse=true 或 NL2SQL_LANGFUSE=on 时生效）
+LANGFUSE_PUBLIC_KEY="pk-lf-xxx"
+LANGFUSE_SECRET_KEY="sk-lf-xxx"
+LANGFUSE_HOST="https://cloud.langfuse.com"      # 自部署填自己的地址
 ```
 
 只读账号建账（管理员执行）：
@@ -193,6 +207,7 @@ redis-server --appendonly yes
 | agent.yml | features.relation_graph / join_static_check / fanout_check | JOIN 治理三开关：表关联关系图谱 / 无 ON 笛卡尔积拦截 / 扇出检测（默认全开） | **生效** |
 | agent.yml | features.explain_gate | EXPLAIN 性能门禁（大表全表扫描拦截 + 独立性能优化轮；环境变量 NL2SQL_EXPLAIN_GATE 可覆盖，评测默认关） | **生效** |
 | agent.yml | features.sql_explainer / clarification | 业务解读+裁判标签 / 表筛选歧义澄清（均可用环境变量关闭；评测默认关，澄清关闭后回退全量不空等） | **生效** |
+| agent.yml | features.langfuse | Langfuse 观测（Trace + 节点 span 耗时/token + LLM generation 成本归因）；默认关，NL2SQL_LANGFUSE 可覆盖 | **默认关** |
 | gate_rules.yml | rules / meta.fail_closed / approval_enabled | 能力（工具）准入声明式规则：默认拒绝、fail-closed、高风险转人工审批（预埋） | **生效** |
 | database.yml | url/连接池/执行超时 | MySQL 连接 | 生效 |
 | database.yml | forced_limit | SELECT 强制 LIMIT（默认 1000；环境变量 NL2SQL_FORCED_LIMIT 可覆盖，0=不追加） | 生效 |
@@ -221,6 +236,10 @@ redis-server --appendonly yes
 | NL2SQL_REDIS_URL | redis://localhost:6379/0 | 检查点与会话目录所在 Redis |
 | NL2SQL_REDIS_PREFIX | nl2sql | Redis 键空间前缀（官方检查点前缀不能含冒号） |
 | NL2SQL_CHECKPOINTING | 未设置（开启） | 检查点开关；off 时返回 None（批量评测不需要 Trace 时可关） |
+| NL2SQL_LANGFUSE | 未设置（取 features=false） | Langfuse 观测开关：on/off；开启需同时配置 LANGFUSE_PUBLIC_KEY/SECRET_KEY |
+| NL2SQL_LANGFUSE_SAMPLE_RATE | 1.0 | Langfuse 采样率（0~1），批量压测可降采样 |
+| NL2SQL_LANGFUSE_EVAL | off | 评测时上报 Langfuse Dataset/Score（自研评测明细始终保留） |
+| LANGFUSE_PUBLIC_KEY / SECRET_KEY / HOST | 无 | Langfuse 凭据与地址（Cloud 或自部署） |
 | BAILIAN_FALLBACK_MODEL | qwen-plus | 降级模型：主模型异常/扩容后仍空响应时整体重试一次 |
 
 ## 启动服务

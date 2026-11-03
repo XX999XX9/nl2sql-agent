@@ -15,7 +15,7 @@ nl2sql-agent/
 │   │   │       ├── chat.py                 # 对话接口双出口共享同一pipeline：POST /api/chat 非流式JSON聚合结果；POST /api/chat/stream SSE流式逐事件推送（intent→sql→executing→correcting→explanation→result→usage→done/error）；断连时 BackgroundTask 关闭生成器，由 iter_run 的 finally 收敛运行状态
 │   │   │       ├── result.py               # 结果接口：按query_id从结果缓存分页拉取数据（GET /api/result/{query_id}?page&page_size），支撑前端翻页
 │   │   │       ├── session.py              # 会话接口：创建/列表/详情/删除多轮对话会话（POST/GET/GET/{id}/DELETE /api/session），按用户隔离
-│   │   │       ├── traces.py               # Trace 接口：GET /api/traces（按会话列运行）、GET /api/traces/{run_id}（检查点历史投影：节点/状态/事件/下一步）
+│   │   │       ├── traces.py               # Trace 接口（Langfuse 开启时作为降级视图保留）：GET /api/traces（按会话列运行）、GET /api/traces/{run_id}（检查点历史投影：节点/状态/事件/下一步）
 │   │   │       ├── eval_logs.py            # 评测日志审查台接口：POST /api/eval/auth 口令校验并签发令牌；GET /api/eval/runs（latest/fail_tests/all_history/history 四组）、GET /api/eval/run（错误分类与库名筛选、结果集瘦身，路径约束防穿越）；读接口统一要求 X-Eval-Token
 │   │   │       ├── schema_info.py          # 元信息接口：返回已接入的表列表与字段结构（/api/schema/tables）、语义映射（/api/schema/semantic-map），供前端"数据字典"面板展示
 │   │   │       └── prompt_optimize.py      # 提示词优化接口（5端点）：策略列表/文件列表/读文件/提交优化（可选A/B评估）/写回提示词文件（自动.bak备份，受allow_write_back控制）；整组路由级 require_eval_access 鉴权，不对外开放
@@ -37,7 +37,7 @@ nl2sql-agent/
 │   │   │
 │   │   ├── nl2sql/                         # NL2SQL 核心模块（自然语言转SQL主链路）
 │   │   │   ├── __init__.py                 # 暴露NL2SQLPipeline统一编排入口
-│   │   │   ├── pipeline.py                 # 流水线编排器（LangGraph StateGraph）：意图分类分流 → query：上下文增强（多轮上下文+Schema检索+术语映射+值链接+候选表沿关系图谱1跳邻接扩展）→SQL生成→静态校验→安全守卫→JOIN扇出检测→执行→0行值缺失诊断→自动纠错循环（q_validate/q_fanout⇄q_correct，最多N轮，扇出纠错只触发一次防死循环）→结果缓存→解释生成；dml：专用模板仅生成不执行；meta：基于Schema直接LLM回答；三分支汇合finalize（usage统计+记轮次+done）。节点+条件边由LangGraph调度，每步经TurnTracker埋点，节点内经custom流通道_emit SSE事件，iter_run透出事件流、run()消费返回聚合结果（单一事实来源）
+│   │   │   ├── pipeline.py                 # 流水线编排器（LangGraph StateGraph）：意图分类分流 → query：上下文增强（多轮上下文+Schema检索+术语映射+值链接+候选表沿关系图谱1跳邻接扩展）→SQL生成→静态校验→安全守卫→JOIN扇出检测→执行→0行值缺失诊断→自动纠错循环（q_validate/q_fanout⇄q_correct，最多N轮，扇出纠错只触发一次防死循环）→结果缓存→解释生成；dml：专用模板仅生成不执行；meta：基于Schema直接LLM回答；三分支汇合finalize（usage统计+记轮次+done）。节点+条件边由LangGraph调度，每步经TurnTracker埋点，节点内经custom流通道_emit SSE事件，iter_run透出事件流、run()消费返回聚合结果（单一事实来源）；Langfuse 开启时 iter_run 建根 trace、_traced 为 18 个节点各开 span（耗时/累计 token），finally 收尾写最终结果与错误
 │   │   │   ├── intent_classifier.py        # 意图分类前置：区分 查询(query)/增删改(dml)/元信息(meta) 三类；关键词正则快路径（明显诉求不调LLM）+ LLM兜底，任何异常兜底query
 │   │   │   ├── conversation.py             # 多轮会话视图：事实源为检查点状态中的 turns（DeltaChannel 增量追加），本模块只读投影；追问时显式注入上一轮 SQL 与涉及表，支持省略式追问；Redis 仅存会话目录与人工澄清现场（clarify_* 30 分钟 TTL）；删除会话时同步 delete_thread 清理检查点，会话本身不自动过期
 │   │   │   ├── table_selector.py           # 两阶段生成第一阶段：全量表结构下让 LLM 只输出精简 JSON（needed 表+use_columns / maybe 表 / need_clarification+questions），服务端按真实 Schema 反查补全 other_columns 与 excluded、做幻觉白名单清洗；解析失败或协议不合法回退全量 Schema，不阻断生成
@@ -69,7 +69,7 @@ nl2sql-agent/
 │   │   │
 │   │   ├── model/                          # 模型层
 │   │   │   ├── __init__.py                 # model包初始化（空）
-│   │   │   └── factory.py                  # 模型工厂：从agent.yml读配置创建LLMClient（OpenAI兼容Chat Completions封装，统一返回content+finish_reason+token usage）/EmbeddingClient（向量化，百炼单批≤10条自动分批）；LLMResult含reasoning字段兼容推理模型；空正文检测：推理模型思考耗尽max_tokens时按4×/16×两级扩容自动重试
+│   │   │   └── factory.py                  # 模型工厂：从agent.yml读配置创建LLMClient（OpenAI兼容Chat Completions封装，统一返回content+finish_reason+token usage）/EmbeddingClient（向量化，百炼单批≤10条自动分批）；LLMResult含reasoning字段兼容推理模型；空正文检测：推理模型思考耗尽max_tokens时按4×/16×两级扩容自动重试；每次真实 chat 请求（含扩容重试与降级模型）记一条 Langfuse generation（模型/入参/补全/usage/finish_reason），token 累计到当前节点 span
 │   │   │
 │   │   ├── optimizer/                      # 提示词优化模块（features.prompt_optimize开关控制路由注册）
 │   │   │   ├── __init__.py                 # 暴露PromptOptimizer
@@ -88,6 +88,10 @@ nl2sql-agent/
 │   │   │   ├── turn_tracker.py             # 单轮追踪器（features.metrics_enabled开关，关闭时step/add_tokens空转、finish返回零值结构）：with step("名")埋点记录每步耗时，add_tokens把LLM调用token归到当前活动步骤，finish()合并同名步骤生成TurnUsage摘要（总耗时+总token+分步明细）供usage事件推送
 │   │   │   └── token_counter.py            # token计数：优先取LLM API返回的usage（最准确）；本模块提供缺失时的本地估算兜底（tiktoken精确编码，未安装则中文≈1字/token、英文≈4字符/token粗估）
 │   │   │
+│   │   ├── observability/                  # 运行期观测（Langfuse 旁路接入，不进入检查点状态）
+│   │   │   ├── __init__.py                 # observability 包初始化
+│   │   │   └── langfuse_client.py          # Langfuse 唯一入口：get_tracer()（NL2SQL_LANGFUSE > agent.yml features.langfuse，默认关；无 SDK/无密钥/初始化失败均返回 None 静默降级）；start_trace/finish_trace 建根 trace（user/session/run_id/最终 SQL/答案/错误/能力轨迹），node_span 为每个图节点开子 span（TraceContext 显式挂父级，跨线程可用），span.finish 写 elapsed_ms + prompt/completion/total tokens + 事件类型；llm_generation 记录每次 LLM 调用并 add_usage 回填 span；score_run/ensure_dataset 供评测 Dataset+Score 回流（NL2SQL_LANGFUSE_EVAL）；句柄只放 ContextVar/进程内注册表，SDK 句柄禁止放入 TurnTracker/State（msgpack 检查点不可序列化）；flush/shutdown 批量异步上报
+│   │   │
 │   │   └── utils/                          # 通用工具函数
 │   │       ├── __init__.py                 # utils包初始化（空）
 │   │       ├── path_tool.py                # 路径工具：PROJECT_ROOT/BACKEND_ROOT根目录定位、project_path拼接
@@ -99,7 +103,7 @@ nl2sql-agent/
 │   │   ├── database.yml                    # 数据库配置：MySQL只读账号连接、连接池(pool_size/max_overflow/pool_recycle)、执行超时(30s)、强制LIMIT(1000)、结果截断行数(1000)、Schema刷新周期(schema_refresh_interval预留未接线)
 │   │   ├── nl2sql.yml                      # NL2SQL配置：correction.max_rounds纠错最大轮数、schema_retriever.top_k检索表数/threshold小库退化阈值、relation.infer_by_naming/verify_inferred关系图谱命名推断与采样验证开关、fanout.mode扇出检测模式(off/static/dynamic)、explain.large_table_rows大表阈值/max_opt_rounds性能优化轮次、capabilities.max_cap_rounds能力申请轮次封顶、result.truncate_rows(预留，实际读database.yml result_row_limit)
 │   │   ├── semantic_map.yml                # 语义映射配置：业务术语→表/字段/聚合/条件四类映射表
-│   │   ├── agent.yml                       # Agent配置：llm.*(模型/温度/max_tokens/超时)、embedding.*(百炼text-embedding-v3)、features十二开关（metrics_enabled/intent_classifier/value_linker/schema_retriever/self_correction/prompt_optimize + JOIN治理三开关relation_graph/join_static_check/fanout_check + explain_gate/sql_explainer/clarification）
+│   │   ├── agent.yml                       # Agent配置：llm.*(模型/温度/max_tokens/超时)、embedding.*(百炼text-embedding-v3)、features 开关（metrics_enabled/intent_classifier/value_linker/schema_retriever/self_correction/prompt_optimize + JOIN治理三开关relation_graph/join_static_check/fanout_check + explain_gate/sql_explainer/clarification/langfuse）
 │   │   ├── gate_rules.yml                  # 能力准入规则：声明式规则（条件+动作+优先级）+ meta.fail_closed 默认拒绝 / approval_enabled 人工审批预埋
 │   │   └── optimizer.yml                   # 优化模块配置：eval_cases评估用例数(3)、allow_write_back写回开关(default_strategy预留未接线)
 │   │
@@ -126,7 +130,7 @@ nl2sql-agent/
 │   │   └── agent.log                       # 主日志（按日轮转保留30天）
 │   │
 │   ├── run.py                              # 启动脚本：以uvicorn启动FastAPI（host/port/debug从环境变量读取）
-│   ├── requirements.txt                    # 后端依赖：fastapi、uvicorn、pydantic、sqlglot、sqlalchemy+pymysql/aiomysql、openai、langgraph（流水线编排）、langgraph-checkpoint-redis（官方检查点）、redis、chromadb、tiktoken、PyYAML
+│   ├── requirements.txt                    # 后端依赖：fastapi、uvicorn、pydantic、sqlglot、sqlalchemy+pymysql/aiomysql、openai、langgraph（流水线编排）、langgraph-checkpoint-redis（官方检查点）、redis、chromadb、tiktoken、langfuse（可选观测）、PyYAML
 │   ├── Dockerfile                          # 后端镜像：python:3.11-slim + gcc/g++（编译型依赖）+ pip 安装 requirements，CMD python run.py
 │   ├── .dockerignore                       # 构建排除：.env、__pycache__、data/、logs/ 等，避免密钥与运行产物进镜像
 │

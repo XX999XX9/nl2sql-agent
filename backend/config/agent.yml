@@ -32,3 +32,5 @@ features:
   explain_gate: true               # EXPLAIN 性能门禁（大表全表扫描无索引拦截+独立优化轮次）
   sql_explainer: true             # SQL 业务解读 + 符合/风险裁判标签（环境变量 NL2SQL_SQL_EXPLAINER 可覆盖；评测脚本默认关）
   clarification: true             # 表筛选阶段人工澄清反问（环境变量 NL2SQL_CLARIFICATION 可覆盖；评测脚本默认关，关闭后回退全量继续不挂起）
+  langfuse: false                  # Langfuse 观测：Trace + 每节点 span（耗时/token）+ LLM generation（成本归因）
+                                   # 默认关闭；NL2SQL_LANGFUSE=on 覆盖，需配置 LANGFUSE_PUBLIC_KEY/SECRET_KEY/HOST
