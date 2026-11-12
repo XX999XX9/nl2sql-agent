@@ -32,7 +32,7 @@ class PromptOptimizer:
         self._meta_prompt = read_text(PROMPTS_DIR / "prompt_optimize_prompt.txt")
 
     # ------------------------------------------------------------------ 优化
-    def optimize(self, prompt: str, strategy_key: str, requirements: str = "") -> dict:
+    async def optimize(self, prompt: str, strategy_key: str, requirements: str = "") -> dict:
         """按策略优化提示词，返回 {strategy, optimized, notes, usage}"""
         strategy: Strategy = get_strategy(strategy_key)
         requirements_block = (
@@ -45,7 +45,7 @@ class PromptOptimizer:
             requirements_block=requirements_block,
             prompt=prompt.strip(),
         )
-        result = self.llm.chat([
+        result = await self.llm.chat([
             {"role": "system", "content": "你是指令遵循严格的提示词工程助手。"},
             {"role": "user", "content": meta},
         ])

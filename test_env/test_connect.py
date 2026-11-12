@@ -97,7 +97,9 @@ def main():
     from app.nl2sql.schema_manager import SchemaManager
 
     def t2():
+        from app.utils.aio import run_sync
         sm = SchemaManager()
+        run_sync(sm.refresh())
         tables = list(sm._tables.keys())
         assert tables, "未解析到任何表"
         return f"解析 {len(tables)} 张表: {', '.join(sorted(tables)[:6])}{'...' if len(tables) > 6 else ''}"
@@ -108,10 +110,12 @@ def main():
     from app.nl2sql.sql_executor import SQLExecutor
 
     def t3():
+        from app.utils.aio import run_sync
         sm = SchemaManager()
+        run_sync(sm.refresh())
         first_table = sorted(sm._tables.keys())[0]   # 动态取库内首张表，适配任意 Spider 库
         ex = SQLExecutor()
-        res = ex.execute(f"SELECT * FROM `{first_table}` LIMIT 5")
+        res = run_sync(ex.execute(f"SELECT * FROM `{first_table}` LIMIT 5"))
         assert res["rows"], "查询结果为空"
         return f"SELECT * FROM {first_table} LIMIT 5 -> {len(res['columns'])} 列 × {len(res['rows'])} 行, total={res['total']}"
 
@@ -134,8 +138,10 @@ def main():
     from app.api.deps import get_conversation_manager, get_result_cache
 
     def t5():
+        from app.utils.aio import run_sync
         p = NL2SQLPipeline(conversation_manager=get_conversation_manager(), result_cache=get_result_cache())
         sm = SchemaManager()
+        run_sync(sm.refresh())
         first_table = sorted(sm._tables.keys())[0]   # 按库动态提问，适配任意 Spider 库主题
         question = f"{first_table} 表里总共有多少条记录？"
         r = p.run(question, session_id=None)

@@ -127,7 +127,7 @@ class SelfCorrector:
 
     # ------------------------------------------------------------------
     # 扇出裁决：静态告警交 LLM 结合问题语义判定（一次调用；risky 时同批返回重写 SQL）
-    def adjudicate_fanout(self, question: str, sql: str, risk_message: str,
+    async def adjudicate_fanout(self, question: str, sql: str, risk_message: str,
                           tables: Optional[List[str]] = None) -> Tuple[str, str, Optional[str], dict]:
         """返回 (verdict, reason, rewritten_sql, usage)。
         safe    告警不成立，保留原 SQL；
@@ -151,7 +151,7 @@ class SelfCorrector:
             risk=risk_message,
         )
         try:
-            result = self.llm.chat([{"role": "user", "content": prompt}])
+            result = await self.llm.chat([{"role": "user", "content": prompt}])
         except Exception as e:
             logger.warning("扇出裁决 LLM 调用失败: %s", str(e).splitlines()[0])
             return "unknown", f"LLM 调用异常: {e}", None, {}
@@ -262,7 +262,7 @@ class SelfCorrector:
 
     # ------------------------------------------------------------------
     # 重写：错误信息回喂 LLM
-    def rewrite(self, question: str, sql: str, error_message: str,
+    async def rewrite(self, question: str, sql: str, error_message: str,
                 extra_context: str = "", tables: Optional[List[str]] = None) -> Tuple[Optional[str], dict]:
         """回喂错误重写 SQL；返回 (新SQL 或 None, token usage)；
         tables 为该轮 Schema 检索命中表（None=全量），据此注入关系键区块"""
@@ -285,7 +285,7 @@ class SelfCorrector:
         )
         if extra_context:
             prompt = f"{extra_context}\n\n{prompt}"
-        result = self.llm.chat([{"role": "user", "content": prompt}])
+        result = await self.llm.chat([{"role": "user", "content": prompt}])
         new_sql = self._extract_sql(result.content)
         usage = {
             "prompt_tokens": result.prompt_tokens,

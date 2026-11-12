@@ -1,6 +1,8 @@
 # 流水线编排器（LangGraph StateGraph 版）：整条 NL2SQL 链路建模为"节点 + 条件边"图，
-# 由 LangGraph 引擎调度执行；iter_run 经 stream_mode="custom" 逐事件产出 SSE 协议，
-# run() 消费同一图返回聚合结果——单一事实来源，JSON 与 SSE 两个出口共享同一流程。
+# 由 LangGraph 引擎调度执行；astream_events 通过事件队列把节点内的 _emit 实时转成 SSE 协议，
+# arun()/run() 消费同一图返回聚合结果——单一事实来源，JSON 与 SSE 两个出口共享同一流程。
+# 全链路异步：节点为 async def，LLM（AsyncOpenAI）与数据库（aiomysql）均 await，
+# 等待 IO 期间让出事件循环；同步调用方（评测脚本/CLI）经 run() 桥接到常驻后台 loop。
 #
 # 图结构（节点 → 条件边路由）：
 #   START → intent ─┬─ query ─→ q_context → q_generate → q_validate ⇄ q_correct
@@ -24,19 +26,20 @@
 #   - 功能开关接线：intent_classifier（关闭直走 query）/ metrics_enabled（Tracker 空转）/
 #     self_correction（max_rounds 生效为 0）/ schema_retriever（None 走全量）
 
+import asyncio
 import time
 import uuid
 import os
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Annotated, Iterator, List, Optional, Sequence, TypedDict
+from typing import Annotated, AsyncIterator, List, Optional, Sequence, TypedDict
 
 import sqlglot
 from langgraph.channels import DeltaChannel
-from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 from sqlglot import exp
 
+from app.utils.aio import run_sync
 from app.formatter.output_formatter import OutputFormatter
 from app.metrics.turn_tracker import TurnTracker
 from app.model.factory import ModelFactory
@@ -81,6 +84,13 @@ REPLAY_ROWS_LIMIT = 50  # 会话轮次里保留的结果快照行数（控制检
 # 当前轮事件的随流缓冲：finalize 节点据此把本轮事件写回状态（供 Trace 投影）。
 # 用 ContextVar 承载，可在不改变节点函数签名的情况下旁路收集。
 _EMIT_BUFFER: ContextVar[Optional[List[dict]]] = ContextVar("emit_buffer", default=None)
+
+# 当前轮的事件队列：astream_events 用它把节点内产出的事件实时转成 SSE。
+# 不走 LangGraph 的 get_stream_writer——该能力依赖 runnable 配置的 contextvar
+# 传播，Python 3.10 下异步节点取不到配置（会抛 “outside of a runnable context”），
+# 队列方案只依赖普通 ContextVar（3.10 异步任务可见），不绑定框架版本。
+_EMIT_QUEUE: ContextVar[Optional["asyncio.Queue"]] = ContextVar("emit_queue", default=None)
+_STREAM_END = object()   # 图执行结束哨兵：向消费方标记事件流终止
 
 
 def _reducer_append(state: Optional[list], writes: Sequence) -> list:
@@ -175,19 +185,17 @@ class NL2SQLState(TypedDict, total=False):
 
 
 def _emit(event_type: str, data: dict):
-    """经 LangGraph custom 流通道推送一条 SSE 协议事件；
-    同时写入本轮缓冲（iter_run 设置），finalize 会把它落到检查点的 events 通道。
-    无流上下文（invoke 直调）时静默跳过。"""
+    """推送一条 SSE 协议事件：
+    ① 写入本轮缓冲（astream_events 设置），finalize 会把它落到检查点的 events 通道；
+    ② 放入本轮事件队列，由 astream_events 实时 yield 给 SSE 消费方。
+    非流式调用（无队列/缓冲）时静默跳过。"""
     event = {"type": event_type, "data": data, "ts": round(time.time(), 3)}
     buffer = _EMIT_BUFFER.get()
     if buffer is not None:
         buffer.append(event)
-    try:
-        writer = get_stream_writer()
-        if writer:
-            writer(event)
-    except Exception:
-        pass  # 非流式调用场景，忽略
+    queue = _EMIT_QUEUE.get()
+    if queue is not None:
+        queue.put_nowait(event)
 
 
 _UNSET = object()   # 区分“没传 checkpointer”和“显式传 None（关闭检查点）”
@@ -347,7 +355,7 @@ class NL2SQLPipeline:
         观测是旁路：未启用 Langfuse 时 span 为 None，逻辑与之前完全一致。"""
         node_name = name or getattr(node, "__name__", "node")
 
-        def wrapped(state):
+        async def wrapped(state):
             buffer = _EMIT_BUFFER.get()
             start = len(buffer) if buffer is not None else 0
             tracer = get_tracer()
@@ -367,7 +375,7 @@ class NL2SQLPipeline:
                 except Exception:
                     span = None
             try:
-                ret = node(state) or {}
+                ret = await node(state) or {}
             except Exception as e:
                 if span is not None:
                     span.finish(error=f"{type(e).__name__}: {e}",
@@ -461,12 +469,22 @@ class NL2SQLPipeline:
         return g.compile(checkpointer=self.checkpointer)
 
     # ==================================================================
-    # 对外入口：iter_run 产出事件 dict；run() 消费并返回聚合结果
+    # 对外入口：astream_events 产出事件 dict；arun()/run() 消费并返回聚合结果
     # ==================================================================
-    def iter_run(self, question: str, session_id: str = None,
-                 reference_turn_id: str = None,
-                 clarify_id: str = None,
-                 user_id: str = "default") -> Iterator[dict]:
+    async def astream_events(self, question: str, session_id: str = None,
+                             reference_turn_id: str = None,
+                             clarify_id: str = None,
+                             user_id: str = "default",
+                             _result_sink: Optional[list] = None) -> AsyncIterator[dict]:
+        """异步入口：异步生成器逐条产出事件 dict（SSE 直接消费）。
+        全链路（LLM HTTP / SQL 执行 / 元数据查询）均为 await，等待 IO 时让出事件循环，
+        单进程可承载远多于线程池上限的并发长连接。
+        _result_sink：Python 异步生成器不能带值 return，聚合调用方（arun）传入
+        一个列表，流结束后取 sink[0] 拿到 PipelineResult。"""
+        # Schema 元数据懒加载 + 表关系图谱建图（一次性，均在 async 上下文内完成）
+        await self.schema_manager.ensure_loaded()
+        if self.relation_graph is not None:
+            await asyncio.to_thread(self.relation_graph.ensure_built)
         # 人工澄清恢复：用户带着 clarify_id 回答时，取回暂存的原始问题，
         # 把补充信息拼入有效问题后续跑（暂存一次性消费）；无效/过期 clarify_id 静默忽略
         if clarify_id and session_id:
@@ -513,6 +531,8 @@ class NL2SQLPipeline:
             self.run_store.start_run(user_id, run_id, session_id, thread_id, question)
 
         token = _EMIT_BUFFER.set([])
+        queue: asyncio.Queue = asyncio.Queue()
+        queue_token = _EMIT_QUEUE.set(queue)
         # Langfuse 根 trace：一轮问答一条 trace；未启用时 root 为 None（全链路空操作）
         tracer = get_tracer()
         root = None
@@ -534,10 +554,16 @@ class NL2SQLPipeline:
             trace_token = set_current_trace(root)
         finished = False
         stream_error = None
+        # 图在后台任务里驱动，事件经 _EMIT_QUEUE 实时回流，由本生成器按发生顺序 yield：
+        # 阻塞相机（running/None）不会出现“整轮跑完才一次性吐事件”的体验
+        worker = asyncio.create_task(self._drive_graph(initial, config, queue))
         try:
-            # custom 通道透出各节点 _emit 的事件；结束后经 StopIteration.value 返回 result
-            yield from (chunk for chunk in self.graph.stream(
-                initial, config, stream_mode="custom"))
+            while True:
+                chunk = await queue.get()
+                if chunk is _STREAM_END:
+                    break
+                yield chunk
+            await worker          # 图执行异常在此向上抛出，由 SSE 路由兜底
         except Exception as e:
             finished = True
             stream_error = str(e)
@@ -556,7 +582,9 @@ class NL2SQLPipeline:
                 )
         finally:
             # 客户端断开时生成器被关闭（GeneratorExit 不走 except/else），
-            # 这里把运行状态收敛，避免运行目录长期停留在 running
+            # 这里取消后台图任务并收敛运行状态，避免运行目录长期停留在 running
+            if not worker.done():
+                worker.cancel()
             if not finished and self.run_store is not None:
                 try:
                     self.run_store.finish_run(
@@ -577,35 +605,56 @@ class NL2SQLPipeline:
                 except Exception:
                     logger.debug("Langfuse trace 收尾失败（忽略）", exc_info=True)
             reset_current_trace(trace_token)
-            try:
-                _EMIT_BUFFER.reset(token)
-            except (ValueError, RuntimeError):
-                # 生成器可能在另一个上下文/线程中被关闭，此时复位令牌会报错；
-                # 该上下文即将销毁，忽略即可
-                pass
-        return result
+            for var, tk in ((_EMIT_QUEUE, queue_token), (_EMIT_BUFFER, token)):
+                try:
+                    var.reset(tk)
+                except (ValueError, RuntimeError):
+                    # 生成器可能在另一个上下文/线程中被关闭，此时复位令牌会报错；
+                    # 该上下文即将销毁，忽略即可
+                    pass
+        if _result_sink is not None:
+            _result_sink.append(result)
+
+    async def _drive_graph(self, initial: NL2SQLState, config: dict,
+                           queue: asyncio.Queue) -> None:
+        """在后台任务中驱动图执行；节点事件已由 _emit 写入队列，这里只负责推进，
+        结束时放入哨兵标记流终止（异常路径也必须放，否则消费方会一直等待）。"""
+        try:
+            await self.graph.ainvoke(initial, config)
+        finally:
+            queue.put_nowait(_STREAM_END)
+
+    async def arun(self, question: str, session_id: str = None,
+                   reference_turn_id: str = None, clarify_id: str = None,
+                   user_id: str = "default") -> PipelineResult:
+        """异步聚合版本：消费事件流并返回 PipelineResult（异步调用方使用）"""
+        sink: list = []
+        async for _ in self.astream_events(question, session_id,
+                                          reference_turn_id=reference_turn_id,
+                                          clarify_id=clarify_id, user_id=user_id,
+                                          _result_sink=sink):
+            pass
+        return sink[0]
 
     def run(self, question: str, session_id: str = None,
             reference_turn_id: str = None, clarify_id: str = None,
             user_id: str = "default") -> PipelineResult:
-        """同步聚合版本：消费图执行的事件流，返回 PipelineResult"""
-        gen = self.iter_run(question, session_id,
-                            reference_turn_id=reference_turn_id,
-                            clarify_id=clarify_id, user_id=user_id)
-        try:
-            while True:
-                next(gen)
-        except StopIteration as e:
-            return e.value
+        """同步聚合版本（评测脚本 / CLI 等非异步调用方使用）。
+        内部固定跑在一个常驻后台事件循环上，避免 asyncio.run 反复建/毁 loop
+        导致异步连接池里的连接绑定到已关闭的 loop。"""
+        coro = self.arun(question, session_id,
+                         reference_turn_id=reference_turn_id,
+                         clarify_id=clarify_id, user_id=user_id)
+        return run_sync(coro)
 
     # ==================================================================
     # 节点：意图分类（正则快路径 + LLM 兜底；开关关闭直走 query）
     # ==================================================================
-    def _n_intent(self, state: NL2SQLState) -> dict:
+    async def _n_intent(self, state: NL2SQLState) -> dict:
         result, tracker = state["result"], state["tracker"]
         with tracker.step("意图分类"):
             if self.intent_classifier:
-                result.intent, intent_usage = self.intent_classifier.classify(state["question"])
+                result.intent, intent_usage = await self.intent_classifier.classify(state["question"])
                 tracker.add_tokens(intent_usage["prompt_tokens"],
                                    intent_usage["completion_tokens"], intent_usage["total_tokens"])
             else:
@@ -620,10 +669,10 @@ class NL2SQLPipeline:
     # ==================================================================
     # 节点：query 主链
     # ==================================================================
-    def _select_candidate_tables(self, question: str, last_tables: Optional[List[str]]) -> Optional[List[str]]:
+    async def _select_candidate_tables(self, question: str, last_tables: Optional[List[str]]) -> Optional[List[str]]:
         """Schema 检索命中表 ∪ 上轮表 ∪ 关系图谱 1 跳邻接表（补 JOIN 关联表召回缺口）"""
         candidate_tables = (
-            self.schema_retriever.select_tables(question, extra_tables=last_tables)
+            await self.schema_retriever.select_tables(question, extra_tables=last_tables)
             if self.schema_retriever else None
         )
         if candidate_tables and self.relation_graph and self.relation_graph.ready:
@@ -633,7 +682,7 @@ class NL2SQLPipeline:
             candidate_tables = expanded
         return candidate_tables
 
-    def _n_q_context(self, state: NL2SQLState) -> dict:
+    async def _n_q_context(self, state: NL2SQLState) -> dict:
         """上下文增强：多轮上下文 + Schema检索 + 术语映射 + 值链接"""
         result, tracker = state["result"], state["tracker"]
         question, session_id = state["question"], state["session_id"]
@@ -654,9 +703,11 @@ class NL2SQLPipeline:
             else:
                 forced_tables = (self.conversation.last_tables(user_id, session_id)
                                  if session_id else [])
-            candidate_tables = self._select_candidate_tables(question, forced_tables)
+            candidate_tables = await self._select_candidate_tables(question, forced_tables)
             term_ctx, term_hits = self.term_mapper.build_context(question)
-            value_ctx, value_hits = self.value_linker.build_context(question, tables=candidate_tables)
+            # 值链接要按列采样真实取值（数据库 IO）：放线程执行，避免阻塞事件循环
+            value_ctx, value_hits = await asyncio.to_thread(
+                self.value_linker.build_context, question, tables=candidate_tables)
             result.term_mappings = [
                 {"term": h.term, "expression": h.expression, "translation": h.translation} for h in term_hits
             ]
@@ -673,15 +724,15 @@ class NL2SQLPipeline:
             "candidate_tables": candidate_tables,
         }
 
-    def _n_q_select(self, state: NL2SQLState) -> dict:
+    async def _n_q_select(self, state: NL2SQLState) -> dict:
         """第一阶段：表字段识别（LLM 结构化裁剪：needed/maybe/excluded + 字段二分）。
         成功 → 裁剪后 Schema 文本注入第二阶段；调用/解析/清洗失败 → 空串回退全量 Schema。
         模型判定问题信息不足 → 人工澄清：暂存现场后路由 finalize，本轮不出 SQL；
-        用户补充后带 clarify_id 重新发起（iter_run 入口恢复现场）。"""
+        用户补充后带 clarify_id 重新发起（astream_events 入口恢复现场）。"""
         tracker = state["tracker"]
         with tracker.step("表字段识别"):
             try:
-                sel = self.table_selector.select(
+                sel = await self.table_selector.select(
                     state["question"], tables=state.get("candidate_tables"),
                     conversation_context=state.get("conversation_context", ""),
                 )
@@ -735,12 +786,12 @@ class NL2SQLPipeline:
     def _r_q_select(self, state: NL2SQLState) -> str:
         return state.get("route") or "q_generate"
 
-    def _n_q_generate(self, state: NL2SQLState) -> dict:
+    async def _n_q_generate(self, state: NL2SQLState) -> dict:
         result, tracker = state["result"], state["tracker"]
         with tracker.step("SQL生成"):
             try:
                 # 生成经能力编排器：模型按需申请 Skill/get_table_schema，一切申请过 Gate
-                cap_out = self.capability.orchestrator.run(
+                cap_out = await self.capability.orchestrator.run(
                     state["question"],
                     tables=state["candidate_tables"],
                     conversation_context=state.get("conversation_context", ""),
@@ -790,7 +841,7 @@ class NL2SQLPipeline:
                 "malformed": tr.malformed,
             })
 
-    def _capability_rewrite(self, state: NL2SQLState) -> dict:
+    async def _capability_rewrite(self, state: NL2SQLState) -> dict:
         """纠错/性能优化重写走能力层 FC 循环：纠错模型可按需（非强制）申请疑似出错环节的
         技能、或为可能缺失的表申请 get_table_schema；Gate 不健康/编排异常时回退
         corrector.rewrite 的无工具一次性重写。返回编排器标准输出 {result, trace, bypass}"""
@@ -812,8 +863,8 @@ class NL2SQLPipeline:
             extra={"known_tables": list(tables or [])},
         )
 
-        def fallback():
-            new_sql, usage = self.corrector.rewrite(
+        async def fallback():
+            new_sql, usage = await self.corrector.rewrite(
                 question, sql, error_message,
                 extra_context=state.get("extra_context", ""), tables=tables)
             return GenerationResult(
@@ -823,7 +874,7 @@ class NL2SQLPipeline:
                 total_tokens=usage.get("total_tokens", 0),
             )
 
-        return self.capability.orchestrator.run_messages(
+        return await self.capability.orchestrator.run_messages(
             messages, ctx=ctx, fallback=fallback,
             extract_sql=self.corrector._extract_sql,
             skill_policy="optional",
@@ -832,7 +883,7 @@ class NL2SQLPipeline:
     def _r_generate(self, state: NL2SQLState) -> str:
         return state["route"]
 
-    def _n_q_validate(self, state: NL2SQLState) -> dict:
+    async def _n_q_validate(self, state: NL2SQLState) -> dict:
         """静态校验：语法/幻觉表字段可纠正 → q_correct 回喂重写；耗尽 → 终止"""
         result, tracker = state["result"], state["tracker"]
         with tracker.step("静态校验"):
@@ -851,7 +902,7 @@ class NL2SQLPipeline:
     def _r_validate(self, state: NL2SQLState) -> str:
         return state["route"]
 
-    def _n_q_guard(self, state: NL2SQLState) -> dict:
+    async def _n_q_guard(self, state: NL2SQLState) -> dict:
         """安全守卫：关键词+AST 双过滤 + 强制 LIMIT 注入；拦截不可纠正直接终止"""
         result, tracker = state["result"], state["tracker"]
         with tracker.step("安全守卫"):
@@ -867,7 +918,7 @@ class NL2SQLPipeline:
     def _r_guard(self, state: NL2SQLState) -> str:
         return state["route"]
 
-    def _n_q_fanout(self, state: NL2SQLState) -> dict:
+    async def _n_q_fanout(self, state: NL2SQLState) -> dict:
         """JOIN 扇出检测（守卫改写后的 SQL）：
         - fanout_waived：当前 SQL 已由 LLM 裁决为误报 → 直接放行（重写后该标记会被清除）
         - ON 键未使用已知关联键：仅记录告警，不拦截（可能存在合理的多候选键）
@@ -889,7 +940,7 @@ class NL2SQLPipeline:
                         logger.info("JOIN 关联键告警（仅记录）: %s", w)
                 except Exception:
                     pass
-            fanout_msg = self.fanout_checker.check(result.sql)
+            fanout_msg = await self.fanout_checker.check(result.sql)
         if not fanout_msg:
             return {"route": "q_perf"}
         logger.warning("JOIN 扇出%s: %s | SQL: %s",
@@ -900,7 +951,7 @@ class NL2SQLPipeline:
 
         with tracker.step("扇出裁决"):
             try:
-                verdict, reason, rewritten, usage = self.corrector.adjudicate_fanout(
+                verdict, reason, rewritten, usage = await self.corrector.adjudicate_fanout(
                     state["question"], result.sql, fanout_msg,
                     tables=state.get("candidate_tables"),
                 )
@@ -933,7 +984,7 @@ class NL2SQLPipeline:
     def _r_fanout(self, state: NL2SQLState) -> str:
         return state["route"]
 
-    def _n_q_perf(self, state: NL2SQLState) -> dict:
+    async def _n_q_perf(self, state: NL2SQLState) -> dict:
         """EXPLAIN 性能门禁：执行前检测；大表 type=ALL 且 key=NULL 且优化轮次未满
         → q_opt_correct 回喂重写（独立 opt_rounds，不计入语义纠错）；
         通过 / EXPLAIN 失败 / 优化轮次耗尽 → q_execute（耗尽仍命中仅告警，不阻断）"""
@@ -941,7 +992,7 @@ class NL2SQLPipeline:
         if not self.explain_gate.enabled:
             return {"route": "q_execute"}
         with tracker.step("性能门禁"):
-            verdict = self.explain_gate.inspect(result.sql)
+            verdict = await self.explain_gate.inspect(result.sql)
         if not verdict.get("ok") or not verdict.get("blocked"):
             return {"route": "q_execute"}
         if state["opt_rounds"] < self.explain_gate.max_opt_rounds:
@@ -955,7 +1006,7 @@ class NL2SQLPipeline:
     def _r_perf(self, state: NL2SQLState) -> str:
         return state["route"]
 
-    def _n_q_opt_correct(self, state: NL2SQLState) -> dict:
+    async def _n_q_opt_correct(self, state: NL2SQLState) -> dict:
         """性能优化重写：独立 opt_rounds 计数，只写 optimization_trail，
         不增 attempt、不写 correction_trail（评测 corrections 口径不受影响）；
         重写后回 q_validate 经守卫/扇出/性能门禁全链路复检；重写失败放行执行不阻断"""
@@ -963,7 +1014,7 @@ class NL2SQLPipeline:
         opt_round = state["opt_rounds"] + 1
         with tracker.step("性能优化"):
             try:
-                cap_out = self._capability_rewrite(state)
+                cap_out = await self._capability_rewrite(state)
                 gen = cap_out["result"]
                 self._record_cap_trail(result, cap_out["trace"], phase="correct")
                 if cap_out.get("bypass"):
@@ -989,13 +1040,13 @@ class NL2SQLPipeline:
     def _r_opt_correct(self, state: NL2SQLState) -> str:
         return state["route"]
 
-    def _n_q_execute(self, state: NL2SQLState) -> dict:
+    async def _n_q_execute(self, state: NL2SQLState) -> dict:
         """执行：失败可纠正 → q_correct；成功 0 行且诊断值缺失 → q_correct；否则落地"""
         result, tracker = state["result"], state["tracker"]
         with tracker.step("SQL执行"):
             _emit("executing", {"sql": result.sql})
             try:
-                exec_result = self.executor.execute(result.sql)
+                exec_result = await self.executor.execute(result.sql)
             except SQLExecutionError as e:
                 logger.error("SQL 执行失败(%s): %s", e.kind, e)
                 error_message = f"SQL 执行失败：{e}"
@@ -1007,7 +1058,7 @@ class NL2SQLPipeline:
 
         # 执行成功：0 行且存在"值不存在"疑点 → 回喂重写（合法 0 行不触发）
         if not exec_result["rows"] and state["attempt"] < state["max_rounds"]:
-            diag, _missing = self.corrector.diagnose_zero_row(result.sql)
+            diag, _missing = await asyncio.to_thread(self.corrector.diagnose_zero_row, result.sql)
             if diag:
                 logger.info("0 行疑似值缺失，进入纠错: %s", diag)
                 return {"route": "q_correct", "error_message": diag}
@@ -1022,13 +1073,13 @@ class NL2SQLPipeline:
     def _r_execute(self, state: NL2SQLState) -> str:
         return state["route"]
 
-    def _n_q_correct(self, state: NL2SQLState) -> dict:
+    async def _n_q_correct(self, state: NL2SQLState) -> dict:
         """纠错重写：错误信息 + 出错 SQL 回喂 LLM；重写产物回 q_validate 再过校验+守卫"""
         result, tracker = state["result"], state["tracker"]
         attempt = state["attempt"] + 1
         with tracker.step("自动纠错"):
             try:
-                cap_out = self._capability_rewrite(state)
+                cap_out = await self._capability_rewrite(state)
                 gen = cap_out["result"]
                 self._record_cap_trail(result, cap_out["trace"], phase="correct")
                 if cap_out.get("bypass"):
@@ -1054,7 +1105,7 @@ class NL2SQLPipeline:
     def _r_correct(self, state: NL2SQLState) -> str:
         return state["route"]
 
-    def _n_q_cache(self, state: NL2SQLState) -> dict:
+    async def _n_q_cache(self, state: NL2SQLState) -> dict:
         """结果入缓存（query_id 分页拉取支撑），推送首屏数据"""
         result = state["result"]
         result.query_id = self.result_cache.put(
@@ -1071,7 +1122,7 @@ class NL2SQLPipeline:
         })
         return {}
 
-    def _n_q_explain(self, state: NL2SQLState) -> dict:
+    async def _n_q_explain(self, state: NL2SQLState) -> dict:
         """解释生成 + SQL/问题一致性裁判：失败返回空串不阻断（增益能力）。
         解读开关关闭时直接跳过（sql_label 置空，前端不渲染徽章）；
         开启时只向解读模型注入最终 SQL 实际涉及的表结构。"""
@@ -1080,7 +1131,7 @@ class NL2SQLPipeline:
             result.sql_label = ""
             return {}
         with tracker.step("解释生成"):
-            explanation, label, usage = self.explainer.explain(
+            explanation, label, usage = await self.explainer.explain(
                 result.sql, state["question"],
                 tables=self._extract_tables(result.sql))
             result.explanation, result.sql_label = explanation, label
@@ -1094,7 +1145,7 @@ class NL2SQLPipeline:
     # ==================================================================
     # 节点：dml 分支（仅生成 + 解释，绝不执行）
     # ==================================================================
-    def _n_d_context(self, state: NL2SQLState) -> dict:
+    async def _n_d_context(self, state: NL2SQLState) -> dict:
         result, tracker = state["result"], state["tracker"]
         question, session_id = state["question"], state["session_id"]
         user_id = state.get("user_id", "default")
@@ -1111,18 +1162,18 @@ class NL2SQLPipeline:
             else:
                 forced_tables = (self.conversation.last_tables(user_id, session_id)
                                  if session_id else [])
-            candidate_tables = self._select_candidate_tables(question, forced_tables)
+            candidate_tables = await self._select_candidate_tables(question, forced_tables)
         result.executed = False
         return {"extra_context": conv_ctx, "candidate_tables": candidate_tables}
 
-    def _n_d_generate(self, state: NL2SQLState) -> dict:
+    async def _n_d_generate(self, state: NL2SQLState) -> dict:
         result, tracker = state["result"], state["tracker"]
         with tracker.step("SQL生成"):
             # 【预埋-当前不生效】DML 仅生成展示、从不执行，故不经能力 Gate。
             # 未来若开放写执行：写类 Tool 必须注册为 medium/high 风险（R100 自动拒绝），
             # 且 Gate 不健康（fail-closed）时在此直接终止 DML，降级为只读模式。
             try:
-                gen = self.generator.generate(
+                gen = await self.generator.generate(
                     state["question"], extra_context=state["extra_context"],
                     mode="dml", tables=state["candidate_tables"],
                 )
@@ -1144,12 +1195,12 @@ class NL2SQLPipeline:
     def _r_d_generate(self, state: NL2SQLState) -> str:
         return state["route"]
 
-    def _n_d_explain(self, state: NL2SQLState) -> dict:
+    async def _n_d_explain(self, state: NL2SQLState) -> dict:
         result, tracker = state["result"], state["tracker"]
         prefix = "（按安全策略，写操作仅生成 SQL 供确认，不会执行）"
         if self.explainer_enabled:
             with tracker.step("解释生成"):
-                explanation, label, usage = self.explainer.explain(
+                explanation, label, usage = await self.explainer.explain(
                     result.sql, state["question"],
                     tables=self._extract_tables(result.sql))
                 tracker.add_tokens(usage["prompt_tokens"],
@@ -1171,13 +1222,13 @@ class NL2SQLPipeline:
     # ==================================================================
     # 节点：meta 分支（Schema 元数据直接回答，不生成 SQL）
     # ==================================================================
-    def _n_meta(self, state: NL2SQLState) -> dict:
+    async def _n_meta(self, state: NL2SQLState) -> dict:
         result, tracker = state["result"], state["tracker"]
         result.sql = ""
         result.executed = False
         with tracker.step("元信息回答"):
             try:
-                llm_result = self.llm.chat([
+                llm_result = await self.llm.chat([
                     {"role": "user", "content":
                         f"你是数据库助手。仅依据下面的表结构信息回答用户问题，用通俗中文简短作答，"
                         f"不要生成 SQL：\n\n{self.schema_manager.schema_context}\n\n【用户问题】{state['question']}"},
@@ -1196,7 +1247,7 @@ class NL2SQLPipeline:
     # ==================================================================
     # 节点：公共尾部（三分支汇合）——usage 统计 + 记轮次 + done
     # ==================================================================
-    def _n_finalize(self, state: NL2SQLState) -> dict:
+    async def _n_finalize(self, state: NL2SQLState) -> dict:
         result, tracker = state["result"], state["tracker"]
         question, session_id = state["question"], state["session_id"]
 

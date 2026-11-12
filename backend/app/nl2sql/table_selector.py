@@ -57,8 +57,8 @@ class TableSelector:
         self._template = read_text(BACKEND_ROOT / "prompts" / "table_select_prompt.txt")
 
     # ------------------------------------------------------------------
-    def select(self, question: str, tables: Optional[List[str]] = None,
-               conversation_context: str = ""):
+    async def select(self, question: str, tables: Optional[List[str]] = None,
+                     conversation_context: str = ""):
         """调用识别模型并清洗结果；tables 限定候选表范围（None=全库）。
         返回 TableSelection（正常）/ ClarificationRequest（需向用户澄清）/ None（失败回退全量）"""
         all_tables = self.schema_manager.get_table_names() if tables is None else [
@@ -80,7 +80,7 @@ class TableSelector:
             conversation_context=conversation_context or "（无）",
         )
         try:
-            result = self.llm.chat([{"role": "user", "content": prompt}])
+            result = await self.llm.chat([{"role": "user", "content": prompt}])
         except Exception as e:
             logger.warning("表字段识别调用失败（回退全量 Schema）: %s", str(e).splitlines()[0])
             return None

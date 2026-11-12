@@ -12,9 +12,10 @@ router = APIRouter()
 
 
 @router.get("/tables", response_model=ApiResponse[list])
-def list_tables(pipeline: NL2SQLPipeline = Depends(get_pipeline)):
+async def list_tables(pipeline: NL2SQLPipeline = Depends(get_pipeline)):
     """全部表及其字段结构（数据字典）"""
     sm = pipeline.schema_manager
+    await sm.ensure_loaded()
     tables = []
     for name in sm.get_table_names():
         columns = [

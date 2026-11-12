@@ -50,13 +50,13 @@ def read_file(name: str, optimizer: PromptOptimizer = Depends(get_prompt_optimiz
 
 
 @router.post("", response_model=ApiResponse)
-def optimize(req: PromptOptimizeRequest,
-             optimizer: PromptOptimizer = Depends(get_prompt_optimizer)):
+async def optimize(req: PromptOptimizeRequest,
+                   optimizer: PromptOptimizer = Depends(get_prompt_optimizer)):
     """优化提示词；evaluate=true 时附加优化前后对比评估（多轮 LLM 调用，较慢）"""
     if req.strategy not in STRATEGIES:
         raise HTTPException(400, f"未知策略: {req.strategy}")
     try:
-        result = optimizer.optimize(req.prompt, req.strategy, req.requirements)
+        result = await optimizer.optimize(req.prompt, req.strategy, req.requirements)
     except Exception as e:
         logger.error("提示词优化失败: %s", e, exc_info=e)
         raise HTTPException(500, f"优化失败：{e}")
@@ -67,7 +67,7 @@ def optimize(req: PromptOptimizeRequest,
             from app.optimizer.evaluator import PromptEvaluator
             cfg = load_yaml(BACKEND_ROOT / "config" / "optimizer.yml")
             evaluator = PromptEvaluator(optimizer.llm, cfg.get("eval_cases", 3))
-            evaluation = evaluator.evaluate(req.prompt, result["optimized"])
+            evaluation = await evaluator.evaluate(req.prompt, result["optimized"])
         except Exception as e:
             logger.error("提示词评估失败: %s", e, exc_info=e)
             evaluation = None    # 评估失败不阻断优化结果返回

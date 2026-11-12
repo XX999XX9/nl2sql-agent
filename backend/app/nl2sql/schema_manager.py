@@ -1,9 +1,11 @@
 # Schema 自动解析：读取表名/字段/类型/主外键/注释，结构化为内部元数据，
 # 拼装 Prompt 上下文文本；带缓存与手动刷新
+# 连接全部走 aiomysql（异步），元数据读取不阻塞事件循环；构造时不联网，
+# 由 pipeline 在请求入口 await ensure_loaded() 懒加载
 
 from typing import Dict, List
 
-import pymysql
+import aiomysql
 
 from app.utils.config_handler import load_yaml
 from app.utils.logger_handler import setup_logger
@@ -22,35 +24,48 @@ class SchemaManager:
         self._table_comments: Dict[str, str] = {}
         self._foreign_keys: Dict[str, List[dict]] = {}  # 表名 -> 外键列表（见 refresh 中结构）
         self._context: str = ""
-        self.refresh()
 
     # ------------------------------------------------------------------
-    def refresh(self):
-        """重新读取 information_schema，刷新缓存（后续阶段接入定时刷新）"""
-        conn = self._connect()
+    async def ensure_loaded(self):
+        """懒加载：缓存为空时读取一次元数据（幂等，重复调用直接返回）"""
+        if not self._context:
+            await self.refresh()
+
+    async def refresh(self):
+        """重新读取 information_schema，刷新缓存（异步连接）"""
+        conn = await aiomysql.connect(
+            host=self._db_config["host"],
+            port=int(self._db_config["port"]),
+            user=self._db_config["user"],
+            password=self._db_config["password"],
+            db=self._db_config["name"],
+            charset=self._db_config.get("charset", "utf8mb4"),
+            connect_timeout=int(self._db_config.get("connect_timeout", 10)),
+            autocommit=True,
+        )
         try:
-            with conn.cursor() as cur:
+            async with conn.cursor() as cur:
                 # 元数据查询本身很快，但大库上 COLUMNS/KEY_COLUMN_USAGE 仍可能变慢，
                 # 与会话级超时口径统一，避免刷新把连接长期占住
-                cur.execute(
+                await cur.execute(
                     f"SET SESSION max_execution_time = {self._execution_timeout * 1000}"
                 )
-                cur.execute(
+                await cur.execute(
                     "SELECT TABLE_NAME, TABLE_COMMENT FROM information_schema.TABLES "
                     "WHERE TABLE_SCHEMA = %s AND TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME",
                     (self._db_config["name"],),
                 )
-                tables = cur.fetchall()
+                tables = await cur.fetchall()
                 self._tables = {name: [] for (name, _c) in tables}
                 self._table_comments = {name: (comment or "") for (name, comment) in tables}
 
-                cur.execute(
+                await cur.execute(
                     "SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, "
                     "COLUMN_COMMENT FROM information_schema.COLUMNS "
                     "WHERE TABLE_SCHEMA = %s ORDER BY TABLE_NAME, ORDINAL_POSITION",
                     (self._db_config["name"],),
                 )
-                for tbl, col, ctype, nullable, key, comment in cur.fetchall():
+                for tbl, col, ctype, nullable, key, comment in await cur.fetchall():
                     self._tables.setdefault(tbl, []).append({
                         "name": col,
                         "type": ctype,
@@ -62,7 +77,7 @@ class SchemaManager:
                 # 显式外键：REFERENTIAL_CONSTRAINTS 定位外键约束，KEY_COLUMN_USAGE
                 # 给出"本表列 → 被引用表.列"映射（复合外键按 ORDINAL_POSITION 顺序）
                 self._foreign_keys = {name: [] for (name, _c) in tables}
-                cur.execute(
+                await cur.execute(
                     "SELECT kcu.TABLE_NAME, kcu.COLUMN_NAME, "
                     "kcu.REFERENCED_TABLE_NAME, kcu.REFERENCED_COLUMN_NAME "
                     "FROM information_schema.REFERENTIAL_CONSTRAINTS rc "
@@ -73,7 +88,7 @@ class SchemaManager:
                     "ORDER BY kcu.TABLE_NAME, kcu.ORDINAL_POSITION",
                     (self._db_config["name"],),
                 )
-                for tbl, col, ref_tbl, ref_col in cur.fetchall():
+                for tbl, col, ref_tbl, ref_col in await cur.fetchall():
                     self._foreign_keys.setdefault(tbl, []).append({
                         "column": col,
                         "ref_table": ref_tbl,
@@ -86,17 +101,6 @@ class SchemaManager:
             )
         finally:
             conn.close()
-
-    def _connect(self):
-        return pymysql.connect(
-            host=self._db_config["host"],
-            port=int(self._db_config["port"]),
-            user=self._db_config["user"],
-            password=self._db_config["password"],
-            database=self._db_config["name"],
-            charset=self._db_config.get("charset", "utf8mb4"),
-            connect_timeout=int(self._db_config.get("connect_timeout", 10)),
-        )
 
     # ------------------------------------------------------------------
     def _build_context(self) -> str:
@@ -126,9 +130,9 @@ class SchemaManager:
     # ------------------------------------------------------------------
     @property
     def schema_context(self) -> str:
-        """Prompt 用的 Schema 上下文文本（带缓存）"""
+        """Prompt 用的 Schema 上下文文本（需先 await ensure_loaded()；未加载时返回空串）"""
         if not self._context:
-            self.refresh()
+            logger.warning("Schema 尚未加载（调用方应先 await ensure_loaded()），返回空上下文")
         return self._context
 
     def build_context_for_tables(self, tables: List[str]) -> str:

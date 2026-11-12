@@ -82,7 +82,7 @@ class CapabilityOrchestrator:
         return tools
 
     # ------------------------------------------------------------------
-    def run(self, question: str, tables: Optional[List[str]] = None,
+    async def run(self, question: str, tables: Optional[List[str]] = None,
             conversation_context: str = "", reference_context: str = "",
             selected_schema: str = "",
             candidate_tables: Optional[List[str]] = None,
@@ -104,8 +104,8 @@ class CapabilityOrchestrator:
             skill_knowledge=self.skill_knowledge,
         )
 
-        def fallback():
-            return self.generator.generate(
+        async def fallback():
+            return await self.generator.generate(
                 question=question, tables=tables,
                 conversation_context=conversation_context,
                 reference_context=reference_context,
@@ -114,12 +114,12 @@ class CapabilityOrchestrator:
                 skill_knowledge=self.skill_knowledge,
             )
 
-        return self.run_messages(
+        return await self.run_messages(
             messages, ctx=ctx, fallback=fallback,
             extract_sql=self.generator.extract_sql, skill_policy="mandatory")
 
-    def run_messages(self, messages: List[dict], *, ctx: ExecutionContext,
-                     fallback, extract_sql, skill_policy: str = "mandatory") -> dict:
+    async def run_messages(self, messages: List[dict], *, ctx: ExecutionContext,
+                           fallback, extract_sql, skill_policy: str = "mandatory") -> dict:
         """通用原生 function-calling 循环（生成/纠错共用同一套 Gate 裁决与回喂协议）。
 
         - messages：首轮消息（调用方按各自模板组装；能力清单区块由模板侧决定有无）；
@@ -145,7 +145,7 @@ class CapabilityOrchestrator:
                 "reason": "Gate 不可用；当前能力均为只读低风险，bypass 让模型自行发挥",
                 "context": ctx.snapshot(),
             })
-            gen = fallback()
+            gen = await fallback()
             return {"result": gen, "trace": [], "bypass": "gate_unhealthy"}
 
         tools_spec = self.build_openai_tools(skill_policy=skill_policy)
@@ -155,7 +155,7 @@ class CapabilityOrchestrator:
             for round_index in range(1, self.max_cap_rounds + 2):  # 末轮为强制出 SQL 轮
                 force_final = round_index > self.max_cap_rounds
                 # 末轮不再下发 tools：模型只能直接输出 SQL（有界终止）
-                resp = self.generator.llm.chat(
+                resp = await self.generator.llm.chat(
                     messages, tools=None if force_final else tools_spec)
                 merged = resp if merged is None else self._merge_tokens(merged, resp)
 

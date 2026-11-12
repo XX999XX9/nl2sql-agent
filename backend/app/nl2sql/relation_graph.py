@@ -73,9 +73,18 @@ class RelationGraph:
         self.edges: List[RelationEdge] = []
         self._adj: Dict[str, List[Tuple[str, RelationEdge]]] = defaultdict(list)
         self._ready = False
-        self._build()
+        self._built = False
+        # 不在构造期建图：Schema 元数据此时可能尚未异步加载，建图会拿到空指纹
+        # 并把空图误存为快照。由调用方在 Schema 就绪后显式调用 ensure_built()
 
     # ================================================================== 构建
+    def ensure_built(self):
+        """懒建图（幂等）：Schema 加载完成后调用；内部为同步采样 IO，调用方可放线程执行"""
+        if self._built:
+            return
+        self._built = True
+        self._build()
+
     def _build(self):
         fingerprint = self.sm.schema_fingerprint()
         if self._load_if_fresh(fingerprint):

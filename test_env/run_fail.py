@@ -146,7 +146,8 @@ def main():
                   + (f" ({r.error_kind})" if r.error_kind else ""), flush=True)
 
         try:
-            pipeline.executor.dispose()
+            from app.utils.aio import run_sync
+            run_sync(pipeline.executor.dispose())
         except Exception:
             pass
 

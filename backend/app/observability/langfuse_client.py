@@ -389,9 +389,12 @@ def set_current_trace(handle: Optional[SpanHandle]):
 
 
 def reset_current_trace(token):
+    """复位根 trace 上下文；未启用观测（token=None）时直接返回"""
+    if token is None:
+        return
     try:
         _CURRENT_TRACE.reset(token)
-    except (ValueError, RuntimeError):
+    except (ValueError, RuntimeError, TypeError):
         pass
 
 
@@ -400,9 +403,12 @@ def set_current_span(handle: Optional[SpanHandle]):
 
 
 def reset_current_span(token):
+    """复位当前 span 上下文；未启用观测（token=None）时直接返回"""
+    if token is None:
+        return
     try:
         _CURRENT_SPAN.reset(token)
-    except (ValueError, RuntimeError):
+    except (ValueError, RuntimeError, TypeError):
         pass
 
 

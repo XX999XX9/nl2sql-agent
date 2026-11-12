@@ -30,7 +30,7 @@ class SQLExplainer:
         self.schema_manager = schema_manager
         self._template = read_text(BACKEND_ROOT / "prompts" / "explain_prompt.txt")
 
-    def explain(self, sql: str, question: str = "",
+    async def explain(self, sql: str, question: str = "",
                 tables: Optional[List[str]] = None) -> tuple:
         """返回 (解读文本, 标签, usage)；标签取值 conform/risk/unknown。
         tables 非空时只注入这些涉及表的结构（与生成/裁决节点口径一致），为空回退全量。
@@ -44,7 +44,7 @@ class SQLExplainer:
             if tables else self.schema_manager.schema_context
         )
         try:
-            result = self.llm.chat([
+            result = await self.llm.chat([
                 {"role": "user", "content": self._template.format(
                     schema_context=schema_context,
                     sql=sql,

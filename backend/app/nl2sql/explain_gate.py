@@ -33,12 +33,12 @@ class ExplainGate:
         self.enabled = enabled
 
     # ------------------------------------------------------------------
-    def inspect(self, sql: str) -> dict:
-        """单次 EXPLAIN 检测。
+    async def inspect(self, sql: str) -> dict:
+        """单次 EXPLAIN 检测（异步）。
         返回 {ok, blocked, worst_type, plans(原始), message}；
         ok=False 表示 EXPLAIN 自身失败（调用方放行执行，不阻断主链路）"""
         try:
-            plans = self.executor.explain(sql)
+            plans = await self.executor.explain(sql)
         except Exception as e:
             logger.warning("EXPLAIN 门禁检测失败（放行执行）: %s", str(e).splitlines()[0])
             return {"ok": False, "blocked": False, "worst_type": None, "plans": [], "message": ""}
@@ -64,7 +64,7 @@ class ExplainGate:
             return {"ok": True, "blocked": False, "worst_type": worst,
                     "plans": plans, "message": ""}
 
-        message = self._build_message(offenders, plans)
+        message = await self._build_message(offenders, plans)
         return {"ok": True, "blocked": True, "worst_type": worst,
                 "plans": plans, "message": message}
 
@@ -89,7 +89,7 @@ class ExplainGate:
                 out.append(p)
         return out
 
-    def _build_message(self, offenders: List[dict], plans: List[dict]) -> str:
+    async def _build_message(self, offenders: List[dict], plans: List[dict]) -> str:
         """回喂纠错的 perf 错误信息：问题计划 + 可用索引 + 改写边界"""
         lines = ["SQL 性能门禁未通过（perf）：以下大表执行计划为 type=ALL（全表扫描）"
                  "且 key=NULL（未使用任何索引），禁止直接执行："]
@@ -108,7 +108,7 @@ class ExplainGate:
                 lines.append(f"- {tbl} 优化器候选索引：{possible}")
                 continue
             try:
-                idx_rows = self.executor.table_indexes(tbl)
+                idx_rows = await self.executor.table_indexes(tbl)
             except Exception:
                 idx_rows = []
             if not idx_rows:

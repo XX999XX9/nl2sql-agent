@@ -18,13 +18,13 @@ router = APIRouter()
 
 
 @router.post("", response_model=ChatResponse)
-def chat(
+async def chat(
     body: ChatRequest,
     pipeline: NL2SQLPipeline = Depends(get_pipeline),
     user_id: str = Depends(get_user_id),
 ):
     """非流式：意图分流 → 查询执行/仅生成SQL/元信息回答（与 SSE 同一 pipeline）"""
-    result = pipeline.run(
+    result = await pipeline.arun(
         body.message, session_id=body.session_id,
         reference_turn_id=body.reference_turn_id,
         clarify_id=body.clarify_id, user_id=user_id,
@@ -74,40 +74,42 @@ def chat(
 
 
 @router.post("/stream")
-def chat_stream(
+async def chat_stream(
     body: ChatRequest,
     pipeline: NL2SQLPipeline = Depends(get_pipeline),
     user_id: str = Depends(get_user_id),
 ):
-    """流式 SSE：逐事件推送流水线进度（事件协议见 schemas/chat.ChatEvent）"""
+    """流式 SSE：逐事件推送流水线进度（事件协议见 schemas/chat.ChatEvent）
 
-    def event_stream():
+    异步生成器直接 consume pipeline.astream_events：等待 LLM/DB 期间让出事件循环，
+    长连接不再占用线程池 worker，同一进程可承载的并发流式会话数不再受线程数限制。
+    """
+
+    # 先创建 pipeline 的异步生成器，SSE 与收尾关闭都持有同一引用，
+    # 保证客户端断开时确定性关闭（触发 astream_events 的 finally 收敛运行状态）
+    pipeline_gen = pipeline.astream_events(
+        body.message, session_id=body.session_id,
+        reference_turn_id=body.reference_turn_id,
+        clarify_id=body.clarify_id, user_id=user_id,
+    )
+
+    async def event_stream():
         try:
-            for event in pipeline.iter_run(
-                body.message, session_id=body.session_id,
-                reference_turn_id=body.reference_turn_id,
-                clarify_id=body.clarify_id, user_id=user_id,
-            ):
+            async for event in pipeline_gen:
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
         except Exception as e:  # 流中途异常兜底：保证前端一定收到终止事件
             yield f"data: {json.dumps({'type': 'error', 'data': {'message': f'内部错误：{e}', 'kind': 'internal'}}, ensure_ascii=False)}\n\n"
             yield f"data: {json.dumps({'type': 'done', 'data': {}}, ensure_ascii=False)}\n\n"
 
-    def close_stream():
-        """断开后确定性关闭生成器：让 iter_run 的 finally 立刻收敛运行状态。
-
-        生成器可能正被消费线程执行（如 LLM 调用中），此时 close() 会抛
-        ValueError（generator already executing）；这种场景无法从外部抢占，
-        交给 iter_run 自身在下次产出/结束时收尾，不让后台任务报错。
-        """
+    async def close_stream():
+        """断开后确定性关闭异步生成器：让 astream_events 的 finally 立刻收敛运行状态。"""
         try:
-            gen.close()
-        except ValueError:
+            await pipeline_gen.aclose()
+        except (RuntimeError, ValueError):
             pass
 
-    gen = event_stream()
     return StreamingResponse(
-        gen,
+        event_stream(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

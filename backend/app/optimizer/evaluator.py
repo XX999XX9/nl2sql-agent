@@ -20,18 +20,18 @@ class PromptEvaluator:
         self.num_cases = max(1, min(num_cases, 10))
 
     # ------------------------------------------------------------------ 入口
-    def evaluate(self, original: str, optimized: str) -> dict:
-        cases = self._gen_cases(original)
+    async def evaluate(self, original: str, optimized: str) -> dict:
+        cases = await self._gen_cases(original)
         results = []
         for idx, case in enumerate(cases):
-            out_orig = self._run(original, case)
-            out_opt = self._run(optimized, case)
+            out_orig = await self._run(original, case)
+            out_opt = await self._run(optimized, case)
             # 位置交替：偶数例 A=原版，奇数例 A=优化版，消除位置偏置
             if idx % 2 == 0:
                 a, b, a_is_orig = out_orig, out_opt, True
             else:
                 a, b, a_is_orig = out_opt, out_orig, False
-            winner, reason = self._judge(original, case, a, b, a_is_orig)
+            winner, reason = await self._judge(original, case, a, b, a_is_orig)
             results.append({
                 "input": case,
                 "original_output": out_orig,
@@ -53,13 +53,13 @@ class PromptEvaluator:
         }
 
     # ------------------------------------------------------------------ 用例生成
-    def _gen_cases(self, prompt: str) -> List[str]:
+    async def _gen_cases(self, prompt: str) -> List[str]:
         meta = (
             f"以下是给 AI 模型使用的提示词。请针对该提示词要解决的任务，生成 {self.num_cases} 个"
             f"典型的测试输入（覆盖正常场景与边界场景，每个一行，格式为'1. 输入'）。"
             f"只输出编号列表，不要其他内容。\n\n【提示词】\n{prompt.strip()}"
         )
-        result = self.llm.chat([{"role": "user", "content": meta}])
+        result = await self.llm.chat([{"role": "user", "content": meta}])
         cases = [
             re.sub(r"^\s*\d+[.、)]\s*", "", line).strip()
             for line in result.content.splitlines() if line.strip()
@@ -71,14 +71,14 @@ class PromptEvaluator:
         return cases
 
     # ------------------------------------------------------------------ 执行与判定
-    def _run(self, prompt: str, case: str) -> str:
-        result = self.llm.chat([
+    async def _run(self, prompt: str, case: str) -> str:
+        result = await self.llm.chat([
             {"role": "system", "content": prompt},
             {"role": "user", "content": case},
         ])
         return (result.content or "").strip()[:2000]
 
-    def _judge(self, prompt: str, case: str, out_a: str, out_b: str, a_is_orig: bool) -> tuple:
+    async def _judge(self, prompt: str, case: str, out_a: str, out_b: str, a_is_orig: bool) -> tuple:
         meta = (
             "你是提示词效果评委。同一个提示词的两个版本对同一输入产出了两份输出，"
             "请判断哪份输出更好地达成了提示词的任务目标。\n\n"
@@ -87,7 +87,7 @@ class PromptEvaluator:
             "判定标准：任务完成度、格式遵循、准确性、简洁性。"
             '只输出 JSON：{"winner": "A" 或 "B" 或 "tie", "reason": "一句话理由"}'
         )
-        result = self.llm.chat([{"role": "user", "content": meta}])
+        result = await self.llm.chat([{"role": "user", "content": meta}])
         try:
             m = re.search(r"\{.*\}", result.content, re.DOTALL)
             verdict = json.loads(m.group(0))

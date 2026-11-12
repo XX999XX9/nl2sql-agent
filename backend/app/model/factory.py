@@ -4,7 +4,7 @@
 from dataclasses import dataclass, field
 from typing import List, Optional
 
-from openai import OpenAI
+from openai import AsyncOpenAI
 
 from app.observability.langfuse_client import clip_messages, clip_text, get_tracer
 from app.utils.config_handler import load_yaml
@@ -40,7 +40,10 @@ class LLMResult:
 
 
 class LLMClient:
-    """OpenAI 兼容 Chat Completions 客户端封装"""
+    """OpenAI 兼容 Chat Completions 客户端封装（异步：AsyncOpenAI）
+
+    网络请求全部走 asyncio，不占用线程；调用方必须 await。
+    """
 
     def __init__(self, api_key: str, base_url: str, model: str,
                  temperature: float = 0.0, max_tokens: int = 2048, timeout: int = 60,
@@ -49,34 +52,34 @@ class LLMClient:
         self.fallback_model = fallback_model or ""
         self.temperature = temperature
         self.max_tokens = max_tokens
-        self.client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout)
+        self.client = AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=timeout)
 
-    def chat(self, messages: List[dict], temperature: Optional[float] = None,
-             tools: Optional[list] = None, tool_choice=None) -> LLMResult:
-        """同步调用；messages 为 OpenAI 格式 [{role, content(, tool_calls)}]。
+    async def chat(self, messages: List[dict], temperature: Optional[float] = None,
+                   tools: Optional[list] = None, tool_choice=None) -> LLMResult:
+        """异步调用；messages 为 OpenAI 格式 [{role, content(, tool_calls)}]。
         tools/tool_choice 为 OpenAI 原生 function calling 参数（None=不启用）。
         主模型（.env 的 BAILIAN_MODEL）优先；调用抛异常或扩容后仍空响应时，
         自动用 fallback_model（默认 qwen-plus）整体重试一次，再失败则抛出原异常。"""
         try:
-            return self._chat_with_model(
+            return await self._chat_with_model(
                 self.model, messages, temperature, tools, tool_choice)
         except Exception as primary_err:
             if self.fallback_model and self.fallback_model != self.model:
                 logger.warning(
                     "主模型 %s 调用失败（%s），降级到 %s 重试一次",
                     self.model, str(primary_err).splitlines()[0][:200], self.fallback_model)
-                return self._chat_with_model(
+                return await self._chat_with_model(
                     self.fallback_model, messages, temperature, tools, tool_choice,
                     last_err=primary_err)
             raise
 
-    def _chat_with_model(self, model: str, messages: List[dict],
-                         temperature: Optional[float], tools: Optional[list],
-                         tool_choice, last_err: Optional[Exception] = None) -> LLMResult:
+    async def _chat_with_model(self, model: str, messages: List[dict],
+                               temperature: Optional[float], tools: Optional[list],
+                               tool_choice, last_err: Optional[Exception] = None) -> LLMResult:
         """指定模型的一次完整尝试（含空正文 4×/16× 扩容重试）；
         扩容后仍为空时，若上层已有主模型异常则抛出，否则抛 RuntimeError 交由 chat() 降级"""
         result = self._to_result(
-            self._create(model, messages, temperature, self.max_tokens, tools, tool_choice))
+            await self._create(model, messages, temperature, self.max_tokens, tools, tool_choice))
         for scale in (4, 16):
             if result.content or result.tool_calls:
                 return result
@@ -85,15 +88,15 @@ class LLMClient:
                 model, result.finish_reason, len(result.reasoning), result.completion_tokens, scale,
             )
             result = self._to_result(
-                self._create(model, messages, temperature, self.max_tokens * scale,
-                             tools, tool_choice))
+                await self._create(model, messages, temperature, self.max_tokens * scale,
+                                   tools, tool_choice))
         if not result.content and not result.tool_calls:
             logger.error("模型 %s 扩容重试后仍为空响应（finish_reason=%s）", model, result.finish_reason)
             raise RuntimeError(f"模型 {model} 多次扩容后仍返回空响应")
         return result
 
-    def _create(self, model: str, messages: List[dict], temperature: Optional[float],
-                max_tokens: int, tools: Optional[list] = None, tool_choice=None):
+    async def _create(self, model: str, messages: List[dict], temperature: Optional[float],
+                      max_tokens: int, tools: Optional[list] = None, tool_choice=None):
         kwargs = dict(
             model=model,
             messages=messages,
@@ -124,7 +127,7 @@ class LLMClient:
                 },
             )
         try:
-            resp = self.client.chat.completions.create(**kwargs)
+            resp = await self.client.chat.completions.create(**kwargs)
         except Exception as e:
             if gen is not None:
                 gen.finish(error=f"{type(e).__name__}: {e}")
@@ -181,17 +184,17 @@ class EmbeddingClient:
 
     def __init__(self, api_key: str, base_url: str, model: str, timeout: int = 60):
         self.model = model
-        self.client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout)
+        self.client = AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=timeout)
 
-    def embed(self, texts: List[str]) -> List[List[float]]:
-        """批量向量化；texts 为空返回空列表"""
+    async def embed(self, texts: List[str]) -> List[List[float]]:
+        """批量向量化（异步）；texts 为空返回空列表"""
         if not texts:
             return []
         # 百炼单批最多 10 条文本，超出分批
         vectors = []
         for i in range(0, len(texts), 10):
             batch = texts[i:i + 10]
-            resp = self.client.embeddings.create(model=self.model, input=batch)
+            resp = await self.client.embeddings.create(model=self.model, input=batch)
             vectors.extend(d.embedding for d in resp.data)
         return vectors
 

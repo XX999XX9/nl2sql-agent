@@ -34,7 +34,7 @@ class FanoutChecker:
         self.mode = mode if mode in ("off", "static", "dynamic") else "static"
 
     # ------------------------------------------------------------------ 入口
-    def check(self, sql: str) -> Optional[str]:
+    async def check(self, sql: str) -> Optional[str]:
         """返回扇出问题描述（用于回喂纠错）；无问题/关闭/无法分析返回 None"""
         if self.mode == "off" or self.graph is None or not self.graph.ready:
             return None
@@ -62,7 +62,7 @@ class FanoutChecker:
         )
 
         if self.mode == "dynamic":
-            confirmed = self._dynamic_confirm(stmt)
+            confirmed = await self._dynamic_confirm(stmt)
             if confirmed is None:
                 logger.info("扇出动态计数无法执行，回退为静态风险提示")
                 return static_msg
@@ -195,7 +195,7 @@ class FanoutChecker:
         return False
 
     # ------------------------------------------------------------------ 动态计数确认
-    def _dynamic_confirm(self, stmt: exp.Expression) -> Optional[Tuple[float, int, int]]:
+    async def _dynamic_confirm(self, stmt: exp.Expression) -> Optional[Tuple[float, int, int]]:
         """COUNT(*) vs COUNT(DISTINCT 驱动表主键)；不相等即确认扇出。
         返回 (放大倍数, 总行数, 去重主键数)；无法执行返回 None"""
         from_ = stmt.args.get("from") or stmt.args.get("from_")
@@ -223,7 +223,7 @@ class FanoutChecker:
                 "c_dist", quoted=True,
             )
             chk.set("expressions", [c_all, c_dist])
-            result = self.executor.execute(chk.sql(dialect="mysql"))
+            result = await self.executor.execute(chk.sql(dialect="mysql"))
             if not result["rows"]:
                 return None
             c_all_n, c_dist_n = int(result["rows"][0][0]), int(result["rows"][0][1])

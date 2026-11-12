@@ -30,7 +30,7 @@ class IntentClassifier:
         self.llm = llm
         self._template = read_text(BACKEND_ROOT / "prompts" / "intent_prompt.txt")
 
-    def classify(self, question: str) -> tuple:
+    async def classify(self, question: str) -> tuple:
         """返回 (intent, usage)：intent 为 query/dml/meta，usage 为本次 LLM 调用的
         token 用量（正则快路径不调模型，返回零值）；任何异常兜底为 query（最安全）"""
         zero = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
@@ -38,12 +38,12 @@ class IntentClassifier:
             return "dml", zero
         if _META_PATTERN.search(question):
             return "meta", zero
-        intent, usage = self._classify_by_llm(question)
+        intent, usage = await self._classify_by_llm(question)
         return (intent or "query"), (usage or zero)
 
-    def _classify_by_llm(self, question: str) -> tuple:
+    async def _classify_by_llm(self, question: str) -> tuple:
         try:
-            result = self.llm.chat([
+            result = await self.llm.chat([
                 {"role": "user", "content": self._template.format(question=question)},
             ])
             usage = {

@@ -1,16 +1,17 @@
-# SQL 执行：SQLAlchemy 连接池 + pymysql 驱动、执行超时控制（max_execution_time）、
+# SQL 执行：SQLAlchemy 异步连接池 + aiomysql 驱动、执行超时控制（max_execution_time）、
 # 错误捕获与分类、结果行数截断与规范化（列名+行数据+总行数+是否截断）；
-# 执行成功后将结果存入结果缓存并分配 query_id（缓存后续阶段接入）
+# 全部方法均为 async：等待网络/IO 期间让出事件循环，不占用线程池 worker
 
 import os
 import re
-from contextlib import contextmanager
+from contextlib import asynccontextmanager
 from datetime import date, datetime
 from decimal import Decimal
 from typing import List, Optional
 
-from sqlalchemy import create_engine, text
-from sqlalchemy.exc import DBAPIError, OperationalError
+from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
+from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.utils.config_handler import load_yaml
 from app.utils.logger_handler import setup_logger
@@ -44,8 +45,8 @@ class SQLExecutor:
             else int(cfg.get("result_row_limit", 1000))
         )
         self._execution_timeout = int(cfg.get("execution_timeout", 30))
-        self._engine = create_engine(
-            f"mysql+pymysql://{cfg['user']}:{cfg['password']}@{cfg['host']}:{cfg['port']}/{cfg['name']}"
+        self._engine = create_async_engine(
+            f"mysql+aiomysql://{cfg['user']}:{cfg['password']}@{cfg['host']}:{cfg['port']}/{cfg['name']}"
             "?charset=utf8mb4",
             pool_size=int(cfg.get("pool_size", 5)),
             max_overflow=int(cfg.get("max_overflow", 10)),
@@ -55,8 +56,8 @@ class SQLExecutor:
         )
 
     # ------------------------------------------------------------------
-    @contextmanager
-    def _connect(self):
+    @asynccontextmanager
+    async def _connect(self):
         """统一取连接：先设会话级执行超时（毫秒）。
 
         池化连接会复用同一物理连接，会话变量随之沿用；但 COUNT/EXPLAIN/索引查询
@@ -64,9 +65,9 @@ class SQLExecutor:
         所有查询一律经此入口，保证超时口径一致（MySQL 8 的 max_execution_time
         只对只读 SELECT 生效，恰好匹配本执行器的只读定位）。
         """
-        with self._engine.connect() as conn:
+        async with self._engine.connect() as conn:
             try:
-                conn.exec_driver_sql(
+                await conn.exec_driver_sql(
                     f"SET SESSION max_execution_time = {self._execution_timeout * 1000}"
                 )
             except DBAPIError as e:
@@ -75,11 +76,11 @@ class SQLExecutor:
             yield conn
 
     # ------------------------------------------------------------------
-    def execute(self, sql: str) -> dict:
+    async def execute(self, sql: str) -> dict:
         """执行 SELECT 并返回 {columns, rows, total, truncated}"""
-        with self._connect() as conn:
+        async with self._connect() as conn:
             try:
-                result = conn.execute(text(sql))
+                result = await conn.execute(text(sql))
                 columns = list(result.keys())
                 rows = [self._normalize_row(row) for row in result.fetchall()]
             except DBAPIError as e:
@@ -88,19 +89,20 @@ class SQLExecutor:
         truncated = self._row_limit > 0 and len(rows) > self._row_limit
         if truncated:
             rows = rows[: self._row_limit]
-        total = self._count_total(sql, truncated)
+        total = await self._count_total(sql, truncated)
         logger.info("SQL 执行成功：%d 行（截断=%s）", len(rows), truncated)
         return {"columns": columns, "rows": rows, "total": total, "truncated": truncated}
 
     # ------------------------------------------------------------------
-    def _count_total(self, sql: str, truncated: bool) -> int:
+    async def _count_total(self, sql: str, truncated: bool) -> int:
         """截断时用 COUNT 包装查询真实总行数（去掉追加强制的 LIMIT）"""
         if not truncated:
             return -1  # 未截断时 total 就是行数，由 pipeline 填充
         unbounded = _TRAILING_LIMIT_RE.sub("", sql).strip().rstrip(";")
         try:
-            with self._connect() as conn:
-                value = conn.execute(text(f"SELECT COUNT(*) FROM ({unbounded}) AS _t")).scalar()
+            async with self._connect() as conn:
+                value = (await conn.execute(
+                    text(f"SELECT COUNT(*) FROM ({unbounded}) AS _t"))).scalar()
                 return int(value)
         except Exception as e:  # COUNT 失败不影响主结果
             logger.warning("总行数统计失败: %s", e)
@@ -136,18 +138,18 @@ class SQLExecutor:
             return SQLExecutionError(msg, kind="timeout")
         return SQLExecutionError(msg, kind="other")
 
-    def explain(self, sql: str) -> List[dict]:
+    async def explain(self, sql: str) -> List[dict]:
         """执行 EXPLAIN（不实际运行 SQL），返回每个计划行的 dict（列名→值）"""
-        with self._connect() as conn:
-            result = conn.execute(text(f"EXPLAIN {sql}"))
+        async with self._connect() as conn:
+            result = await conn.execute(text(f"EXPLAIN {sql}"))
             columns = list(result.keys())
             return [dict(zip(columns, self._normalize_row(row))) for row in result.fetchall()]
 
-    def table_indexes(self, table: str) -> List[dict]:
+    async def table_indexes(self, table: str) -> List[dict]:
         """表上的真实索引（information_schema.STATISTICS）：
         [{index_name, column, non_unique, seq}]，按索引名/序号排序"""
-        with self._connect() as conn:
-            rows = conn.execute(
+        async with self._connect() as conn:
+            rows = (await conn.execute(
                 text(
                     "SELECT INDEX_NAME, COLUMN_NAME, NON_UNIQUE, SEQ_IN_INDEX "
                     "FROM information_schema.STATISTICS "
@@ -155,11 +157,11 @@ class SQLExecutor:
                     "ORDER BY INDEX_NAME, SEQ_IN_INDEX"
                 ),
                 {"db": self._db_name, "tbl": table},
-            ).fetchall()
+            )).fetchall()
         return [
             {"index_name": r[0], "column": r[1], "non_unique": int(r[2]), "seq": int(r[3])}
             for r in rows
         ]
 
-    def dispose(self):
-        self._engine.dispose()
+    async def dispose(self):
+        await self._engine.dispose()

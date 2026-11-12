@@ -4,6 +4,7 @@
 # 表结构变更（指纹变化）时自动重建索引；任何失败降级为全量，不阻断主链路。
 # 开关：config/agent.yml features.schema_retriever（默认关闭，可选开启）
 
+import asyncio
 import json
 import time
 from typing import List, Optional
@@ -57,7 +58,7 @@ class SchemaRetriever:
             items.append((tbl, "\n".join(desc_lines)))
         return items
 
-    def index(self, force: bool = False) -> bool:
+    async def index(self, force: bool = False) -> bool:
         """构建/重建向量索引；指纹一致且索引非空则跳过。返回是否真正建立索引"""
         items = self._table_descriptions()
         if not items:
@@ -72,8 +73,9 @@ class SchemaRetriever:
 
         try:
             tables = [t for t, _ in items]
-            vectors = self.embedding.embed([d for _, d in items])
-            self.collection.upsert(
+            vectors = await self.embedding.embed([d for _, d in items])
+            await asyncio.to_thread(
+                self.collection.upsert,
                 ids=tables,
                 embeddings=vectors,
                 documents=[d for _, d in items],
@@ -115,7 +117,7 @@ class SchemaRetriever:
             logger.warning("Schema 索引快照写入失败: %s", e)
 
     # ------------------------------------------------------------------ 检索
-    def select_tables(self, question: str, extra_tables: Optional[List[str]] = None) -> Optional[List[str]]:
+    async def select_tables(self, question: str, extra_tables: Optional[List[str]] = None) -> Optional[List[str]]:
         """检索相关问题涉及的表；返回 None 表示走全量快路径：
         - 索引不可用（未成功建立）
         - 小库（表数 < threshold，检索收益低于全量注意力代价）
@@ -125,14 +127,15 @@ class SchemaRetriever:
             return None
 
         if not self._indexed:
-            self.index()
+            await self.index()
 
         if not self._indexed:
             return None    # 索引失败（如 embedding 不可用）→ 降级全量
 
         try:
-            q_vec = self.embedding.embed([question])[0]
-            res = self.collection.query(
+            q_vec = (await self.embedding.embed([question]))[0]
+            res = await asyncio.to_thread(
+                self.collection.query,
                 query_embeddings=[q_vec],
                 n_results=min(self.top_k, self.collection.count()),
             )

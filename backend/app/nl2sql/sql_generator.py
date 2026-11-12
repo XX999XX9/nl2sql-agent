@@ -41,7 +41,7 @@ class SQLGenerator:
         self._template = read_text(BACKEND_ROOT / "prompts" / "nl2sql_prompt.txt")
         self._dml_template = read_text(BACKEND_ROOT / "prompts" / "dml_prompt.txt")
 
-    def generate(self, question: str, extra_context: str = "", mode: str = "query",
+    async def generate(self, question: str, extra_context: str = "", mode: str = "query",
                  tables: Optional[List[str]] = None,
                  conversation_context: str = "",
                  reference_context: str = "",
@@ -56,6 +56,42 @@ class SQLGenerator:
         tables 为 Schema 检索命中的表集合（None=全量 Schema 注入）；
         selected_schema 为第一阶段「表字段识别」裁剪后的上下文（query 模式），
         非空时替代原始 Schema 注入生成模板"""
+        schema_context = (
+            self.schema_manager.schema_context
+            if tables is None
+            else self.schema_manager.build_context_for_tables(tables)
+        )
+        if mode == "query" and selected_schema:
+            schema_context = selected_schema
+        if mode == "dml":
+            template = self._dml_template
+            user_prompt = template.format(schema_context=schema_context, question=question)
+            if extra_context:
+                user_prompt = f"{extra_context}\n\n{user_prompt}"
+        else:
+            messages = self.build_query_messages(
+                question=question, tables=tables,
+                conversation_context=conversation_context,
+                reference_context=reference_context,
+                selected_schema=selected_schema,
+                capability_catalog=capability_catalog,
+                skill_knowledge=skill_knowledge,
+                schema_context_override=schema_context,
+            )
+
+        result = await self.llm.chat(messages)
+
+        sql = self.extract_sql(result.content)
+        if not sql:
+            logger.warning("未能从模型输出中提取 SQL，原始输出: %s", result.content[:200])
+        return GenerationResult(
+            sql=sql,
+            raw_output=result.content,
+            prompt_tokens=result.prompt_tokens,
+            completion_tokens=result.completion_tokens,
+            total_tokens=result.total_tokens,
+            model=result.model,
+        )
 
     # -----------------------------------------------------------
     def build_query_messages(self, question: str, tables: Optional[List[str]] = None,
@@ -102,42 +138,6 @@ class SQLGenerator:
 
     def extract_sql(self, text: str) -> str:
         return self._extract_sql(text)
-        schema_context = (
-            self.schema_manager.schema_context
-            if tables is None
-            else self.schema_manager.build_context_for_tables(tables)
-        )
-        if mode == "query" and selected_schema:
-            schema_context = selected_schema
-        if mode == "dml":
-            template = self._dml_template
-            user_prompt = template.format(schema_context=schema_context, question=question)
-            if extra_context:
-                user_prompt = f"{extra_context}\n\n{user_prompt}"
-        else:
-            messages = self.build_query_messages(
-                question=question, tables=tables,
-                conversation_context=conversation_context,
-                reference_context=reference_context,
-                selected_schema=selected_schema,
-                capability_catalog=capability_catalog,
-                skill_knowledge=skill_knowledge,
-                schema_context_override=schema_context,
-            )
-
-        result = self.llm.chat(messages)
-
-        sql = self.extract_sql(result.content)
-        if not sql:
-            logger.warning("未能从模型输出中提取 SQL，原始输出: %s", result.content[:200])
-        return GenerationResult(
-            sql=sql,
-            raw_output=result.content,
-            prompt_tokens=result.prompt_tokens,
-            completion_tokens=result.completion_tokens,
-            total_tokens=result.total_tokens,
-            model=result.model,
-        )
 
     @staticmethod
     def _extract_sql(text: str) -> str:

@@ -508,7 +508,8 @@ def run_round(run_id: int, db_filter=None, limit=None, rerun: bool = False):
 
         # 释放该库连接池，防 20 库连接堆积
         try:
-            pipeline.executor.dispose()
+            from app.utils.aio import run_sync
+            run_sync(pipeline.executor.dispose())
         except Exception:
             pass
 
